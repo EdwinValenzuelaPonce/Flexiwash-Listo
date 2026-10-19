@@ -8,7 +8,9 @@
 const PAGE = 1000; // tamaño de página (límite por defecto de PostgREST en Supabase)
 
 export function createSupabase(rawUrl, key) {
-  const url = String(rawUrl || "").replace(/\/+$/, "");
+  // Acepta la URL con o sin "/rest/v1" o barra final: solo importa el origen (https://xxxx.supabase.co).
+  let url = String(rawUrl || "").trim().replace(/\/+$/, "");
+  try { url = new URL(url).origin; } catch { /* se deja tal cual */ }
   if (!url || !key) return null;
   // Llaves anteriores (JWT "eyJ…") van también como Bearer; las nuevas "sb_publishable_…" solo en apikey.
   const auth = { apikey: key, ...(key.startsWith("eyJ") ? { Authorization: `Bearer ${key}` } : {}) };
@@ -19,7 +21,11 @@ export function createSupabase(rawUrl, key) {
       headers: { ...auth, ...(body && !raw ? { "Content-Type": "application/json" } : {}), ...headers },
       body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`Supabase ${method} ${path.split("?")[0]} → HTTP ${r.status}`);
+    if (!r.ok) {
+      let detail = "";
+      try { const j = await r.clone().json(); detail = j.code ? ` [${j.code}] ${j.message || ""}` : ` ${j.message || j.error || ""}`; } catch { /* sin cuerpo */ }
+      throw new Error(`Supabase ${method} ${path.split("?")[0]} → HTTP ${r.status}${detail}`);
+    }
     const type = r.headers.get("content-type") || "";
     return type.includes("json") ? r.json() : null;
   };
