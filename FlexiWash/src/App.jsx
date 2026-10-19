@@ -1548,9 +1548,9 @@ html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
 .fw-app{height:100dvh;min-height:0;overflow:hidden}
 .fw-shell{height:100dvh;min-height:0;overflow:hidden}
 .fw-content{min-height:0;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
-.fw-content:has(.fw-login){overflow:hidden}
+.fw-content:has(.fw-login){overflow-y:auto;overscroll-behavior:none}
 .fw-screen--pad-bottom{padding-bottom:24px}
-@media (max-height:720px){.fw-login{padding-top:10px;gap:8px}.fw-login-hero{padding:6px 4px}.fw-login-logo{max-height:80px;width:auto}}
+@media (max-height:820px){.fw-login{padding-top:10px;gap:8px}.fw-login-hero{padding:6px 4px}.fw-login-hero h1{font-size:22px;margin-bottom:6px}.fw-login-logo{max-height:80px;width:auto}.fw-login-actions{gap:8px}}
 .fw-notif-panel{width:290px;max-height:340px;overflow-y:auto}
 .fw-notif-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13px}
 .fw-notif-panel p.is-unread{background:var(--fw-teal-soft, #e6f4f3);border-radius:10px;padding:8px}
