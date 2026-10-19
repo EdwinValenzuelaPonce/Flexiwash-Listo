@@ -10,6 +10,8 @@ import { sb } from "./supabase.js";
 const KEYS = { requests: "id", messages: "id", calls: "reqId", providerCfg: "id", ratings: "reqId", photos: "id", providers: "id" };
 const LS_PREFIX = "fw:shared:";
 let online = false;
+let lastError = "";
+export const getSyncStatus = () => ({ cloud: !!sb, online, error: lastError });
 const cols = {};
 
 const lsRead = (name) => { try { const v = JSON.parse(window.localStorage.getItem(LS_PREFIX + name)); return Array.isArray(v) ? v : []; } catch { return []; } };
@@ -38,13 +40,13 @@ function collection(name) {
   const wr = (next) => {
     const prev = cache;
     set(next);
-    if (!online) return;
+    if (!online && !sb) return;
     // Se envían solo los elementos que cambiaron: dos dispositivos escribiendo a la vez no se pisan.
     const before = new Map(prev.map((x) => [String(x[key]), JSON.stringify(x)]));
     const after = new Set(next.map((x) => String(x[key])));
     const upserts = next.filter((x) => before.get(String(x[key])) !== JSON.stringify(x));
     const deletes = [...before.keys()].filter((k) => !after.has(k));
-    if (upserts.length || deletes.length) (sb ? sbWrite(name, { upserts, deletes }) : post(`/api/col/${name}`, { upserts, deletes })).catch(() => { online = false; });
+    if (upserts.length || deletes.length) (sb ? sbWrite(name, { upserts, deletes }).then(() => { online = true; lastError = ""; }) : post(`/api/col/${name}`, { upserts, deletes })).catch((e) => { online = false; lastError = "Escritura: " + (e?.message || e); });
   };
   const use = () => {
     const [l, setL] = useState(rd);
@@ -72,9 +74,9 @@ function connectSupabase() {
     const seq = writeSeq;
     return sb.fetchState().then((state) => {
       if (inflight > 0 || seq !== writeSeq) return; // hubo escrituras mientras consultaba: esta lectura ya es vieja
-      online = true;
+      online = true; lastError = "";
       Object.keys(KEYS).forEach((n) => { const next = Array.isArray(state[n]) ? state[n] : []; if (!same(next, cols[n].rd())) cols[n].set(next); });
-    }).catch(() => { online = false; });
+    }).catch((e) => { online = false; lastError = "Lectura: " + (e?.message || e); });
   };
   syncNow();
   setInterval(() => { if (!document.hidden) syncNow(); }, 2000);
