@@ -1545,10 +1545,10 @@ const CSS = `
 .fw-notif-panel{position:absolute;right:0;top:44px;width:230px;background:var(--fw-surface);border:1px solid var(--fw-line);border-radius:14px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.12);z-index:20;}
 html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
 #root{height:100%}
-.fw-app{height:100dvh;min-height:0;overflow:hidden}
-.fw-shell{height:100dvh;min-height:0;overflow:hidden}
+.fw-app{height:var(--app-h,100dvh);min-height:0;overflow:hidden}
+.fw-shell{height:var(--app-h,100dvh);min-height:0;overflow:hidden}
 .fw-content{min-height:0;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
-.fw-content:has(.fw-login){overflow-y:auto;overscroll-behavior:none}
+.fw-content:has(.fw-login){overflow-y:auto}
 .fw-screen--pad-bottom{padding-bottom:24px}
 @media (max-height:820px){.fw-login{padding-top:10px;gap:8px}.fw-login-hero{padding:6px 4px}.fw-login-hero h1{font-size:22px;margin-bottom:6px}.fw-login-logo{max-height:80px;width:auto}.fw-login-actions{gap:8px}}
 .fw-notif-panel{width:290px;max-height:340px;overflow-y:auto}
