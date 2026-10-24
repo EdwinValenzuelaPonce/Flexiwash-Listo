@@ -7,7 +7,7 @@ import { sb } from "./supabase.js";
 // localStorage y solo sincroniza entre pestañas del mismo navegador.
 // Si hay credenciales de Supabase (.env), los datos viven en la nube (supabase.js) y los dos celulares
 // pueden estar en redes distintas: se sincronizan consultando la tabla cada ~2 s.
-const KEYS = { requests: "id", messages: "id", calls: "reqId", providerCfg: "id", ratings: "reqId", photos: "id", providers: "id" };
+const KEYS = { requests: "id", messages: "id", calls: "reqId", providerCfg: "id", ratings: "reqId", photos: "id", providers: "id", support: "id" };
 const LS_PREFIX = "fw:shared:";
 let online = false;
 let lastError = "";
@@ -66,6 +66,7 @@ const provCfg = collection("providerCfg");   // [{ id, available, schedule }]
 const ratingsCol = collection("ratings");    // [{ reqId, providerId, avg, answers, comment, ts }]
 const providersCol = collection("providers"); // prestadores registrados [{ id, nombre, telefono, pin, curp, zona, services, verified, ts }]
 const photosCol = collection("photos");      // [{ id, reqId, providerId, url, ts }]
+const supportCol = collection("support");    // chat de asistencia [{ id, threadId, role, name, from: "user"|"bot"|"agent", text, escalated?, ts }]
 
 // Nube (Supabase): consulta periódica de todo el estado; solo notifica a la UI si algo cambió.
 function connectSupabase() {
@@ -166,15 +167,19 @@ export async function resetDemo() {
   else Object.keys(KEYS).filter((n) => n !== "providers").forEach((n) => cols[n].set([]));
 }
 
+/* ---- Chat de asistencia (cliente/prestador <-> asistente o agente) ---- */
+export const useSupport = () => supportCol.use();
+export const sendSupport = (m) => supportCol.wr([...supportCol.rd(), { id: Date.now() + Math.random(), ts: Date.now(), ...m, text: String(m.text || "").trim().slice(0, 500) }].slice(-500));
+
 /* ---- Prestadores registrados (demo: sin autenticación real; el PIN se guarda en claro) ---- */
 export const useProviders = () => providersCol.use();
 export const registerProvider = (p) => {
   const id = Date.now();
-  providersCol.wr([...providersCol.rd(), { ...p, id, verified: true, ts: id }].slice(-100));
+  providersCol.wr([...providersCol.rd(), { ...p, id, verified: p.idStatus === "verified", ts: id }].slice(-100));
   return id;
 };
 // Prestador registrado → mismo formato que los de TEAM en App.jsx (calificación 0 = "Nuevo").
-export const providerToMember = (p) => ({ id: p.id, name: p.nombre, phone: p.telefono, zone: p.zona, rating: 0, reviews: 0, services: p.services, years: 0, days: [0, 1, 2, 3, 4, 5], from: 8, to: 18, registered: true });
+export const providerToMember = (p) => ({ id: p.id, name: p.nombre, phone: p.telefono, zone: p.zona, rating: 0, reviews: 0, services: p.services, idStatus: p.idStatus ?? (p.verified ? "verified" : "pending"), years: 0, days: [0, 1, 2, 3, 4, 5], from: 8, to: 18, registered: true });
 
 export const DAY_NAMES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const hh = (n) => `${String(n).padStart(2, "0")}:00`;

@@ -4,10 +4,12 @@ import { compressImage } from "./photos.js";
 import { useGeolocation, distKm } from "./geo.js";
 import { ProviderMap } from "./TrackingMap.jsx";
 import { ChatView, CallView, useIncomingCall } from "./Comms.jsx";
+import SupportChat from "./Support.jsx";
+import { BadgeRow, providerBadges } from "./badges.jsx";
 import { usePersistentState } from "./usePersistentState.js";
 import {
   ChevronLeft, X, MapPin, Wallet, Clock, User, CheckCircle2, CalendarDays,
-  History, MessageCircle, Phone, Home as HomeIcon, Car, Sofa, Landmark, Camera, Plus, Trash2
+  History, MessageCircle, Headphones, Phone, Home as HomeIcon, Car, Sofa, Landmark, Camera, Plus, Trash2
 } from "lucide-react";
 
 const COMMISSION = 0.15;      // comisión FlexiWash sobre el precio del servicio
@@ -99,6 +101,7 @@ function PhotoSlots({ reqId, providerId }) {
 
 export default function ProviderPanel({ onExit, team = [], meId }) {
   const [tab, setTab] = useState("home");
+  const [supportOpen, setSupportOpen] = useState(false);
   const me = meId ?? team[0]?.id ?? 1;
   // Agenda y disponibilidad viven en el almacén compartido: lo que se edita aquí es lo que ve el cliente.
   const meLive = team.find((t) => t.id === me) || team[0];
@@ -297,6 +300,8 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
         <div className="fwp-chips">{Object.keys(ICONS).map((s) => <button key={s} disabled={!editing} className={`fwp-chip ${profile.services.includes(s) ? "is-on" : ""}`} onClick={() => toggleService(s)}>{s}</button>)}</div>
         <button className={editing ? "fw-btn-primary fw-btn-block" : "fw-btn-outline fw-btn-block"} onClick={() => setEditing(!editing)}>{editing ? "Guardar cambios" : "Editar perfil"}</button>
       </div>
+      {meLive && <div className="fw-card fwp-col"><span className="fwp-label">Mis insignias</span><BadgeRow badges={providerBadges(meLive, allRatings)} /></div>}
+      <button className="fw-btn-outline fw-btn-block" onClick={() => setSupportOpen(true)}><Headphones size={16} style={{ verticalAlign: "-3px" }} /> Asistencia y ayuda</button>
       <button className="fw-btn-outline fw-btn-block" onClick={onExit}>Cerrar sesión</button>
     </>
   );
@@ -335,6 +340,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
         <button key={id} className={`fw-navitem ${tab === id ? "is-active" : ""}`} onClick={() => setTab(id)}><Icon size={20} strokeWidth={tab === id ? 2.4 : 1.8} />{id === "messages" && unreadTotal > 0 && <span className="fw-badge" style={{ top: 0, right: "50%", marginRight: -22 }}>{unreadTotal}</span>}<span>{label}</span></button>))}
       </div>
       {comms?.type === "chat" && <ChatView reqId={comms.reqId} me="provider" title={`Cliente #${comms.reqId}`} subtitle={mine.find((r) => r.id === comms.reqId)?.zone} onClose={() => setComms(null)} />}
+      {supportOpen && <SupportChat role="provider" threadId={`provider-${me}`} name={meLive?.name || ""} onClose={() => setSupportOpen(false)} />}
       {comms?.type === "call" && <CallView reqId={comms.reqId} me="provider" name={`Cliente #${comms.reqId}`} onClose={() => setComms(null)} />}
     </div>
   );

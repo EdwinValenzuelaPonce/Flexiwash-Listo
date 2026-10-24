@@ -4,6 +4,9 @@ import ProviderPanel from "./Provider.jsx";
 import TrackingMap, { PlaceMap } from "./TrackingMap.jsx";
 import { useRequests, saveRequest, startCall, useAllMessages, useProviderCfgs, useRatings, saveRating, liveMember, usePhotos, resetDemo, useProviders, providerToMember } from "./store.js";
 import ProviderRegister from "./ProviderRegister.jsx";
+import PastServices from "./PastServices.jsx";
+import SupportChat from "./Support.jsx";
+import { Badge, BadgeRow, providerBadges, serviceBadge } from "./badges.jsx";
 import { ChatView, CallView, useIncomingCall } from "./Comms.jsx";
 import { usePersistentState, clearPersistedState } from "./usePersistentState.js";
 import { formatCardNumber, formatExp, onlyDigits, validEmail, validPhone, validateCard, validateAddress, testCard } from "./validators.js";
@@ -12,7 +15,7 @@ import {
   FileCheck2, HeartHandshake, Camera, CreditCard, Smartphone, Mail, User,
   Home as HomeIcon, Clock, MapPin, Wallet, RefreshCw, CheckCircle2, Truck,
   Sparkles, Sofa, BedDouble, UtensilsCrossed, Bath, Wind, Droplet, Fan,
-  SprayCan, Car, AlertTriangle, X, Pencil, Camera as CameraIcon, MessageCircle
+  SprayCan, Car, AlertTriangle, X, Pencil, Camera as CameraIcon, MessageCircle, Headphones
 } from "lucide-react";
 
 /* ---------------------------------------------------------------------- */
@@ -369,6 +372,9 @@ export default function App() {
   const [showAddrForm, setShowAddrForm] = useState(false);
   const [orderNote, setOrderNote] = useState("");
   const [comms, setComms] = useState(null);
+  const [supportOpen, setSupportOpen] = useState(false);
+  // Identificador del hilo de asistencia de este dispositivo (cliente)
+  const supportThread = useMemo(() => { try { let v = window.localStorage.getItem("fw:deviceId"); if (!v) { v = Math.random().toString(36).slice(2, 10); window.localStorage.setItem("fw:deviceId", v); } return `client-${v}`; } catch { return "client-anon"; } }, []);
   const incomingId = useIncomingCall(currentOrder ? [currentOrder.id] : [], "client");
   useEffect(() => { if (incomingId && !comms) setComms({ type: "call" }); }, [incomingId]); // eslint-disable-line
   const emptyTopup = { monto: "", nombre: "", numero: "", exp: "", cvv: "" };
@@ -482,7 +488,7 @@ export default function App() {
     const given = ratings.filter((v) => v > 0);
     if (!given.length) return;
     if (currentOrder?.employee?.id != null) {
-      saveRating({ reqId: currentOrder.id, providerId: currentOrder.employee.id, avg: given.reduce((a, b) => a + b, 0) / given.length, answers: [...ratings], comment: comment.trim().slice(0, 300) });
+      saveRating({ reqId: currentOrder.id, providerId: currentOrder.employee.id, avg: given.reduce((a, b) => a + b, 0) / given.length, answers: [...ratings], comment: comment.trim().slice(0, 300), service: curReq?.service, category: curReq?.category });
     }
     setHistory((h) => [{ ...currentOrder, ratings: [...ratings], comment }, ...h]);
     setCurrentOrder(null);
@@ -928,6 +934,7 @@ export default function App() {
               <div>
                 <strong>{m.name}</strong>
                 <div className="fw-stars-mini">{"★".repeat(Math.round(m.rating))} <span className="fw-muted">{ratingText(m)}{m.years ? ` · ${yearsLabel(m.years)} de experiencia` : ""} · {serviceLabels(m).join(", ")}</span></div>
+                <BadgeRow badges={providerBadges(m, allRatings)} max={3} />
               </div>
             </button>
           ))}
@@ -1134,7 +1141,6 @@ export default function App() {
   const renderEmployeeDetail = () => {
     const e = selectedEmployee && (team.find((t) => t.id === selectedEmployee.id) || selectedEmployee);
     if (!e) return null;
-    const comments = allRatings.filter((r) => r.providerId === e.id && r.comment).slice(-3).reverse();
     return (
       <div className="fw-screen">
         <TopBar title="Empleado" onBack={pop} />
@@ -1143,6 +1149,7 @@ export default function App() {
           <h2>{e.name}</h2>
           <div className="fw-stars-mini">{"★".repeat(Math.round(e.rating))}{"☆".repeat(5 - Math.round(e.rating))} <span className="fw-muted">{ratingText(e)}</span></div>
           <p className="fw-muted">{e.years ? `${yearsLabel(e.years)} de experiencia · ` : "Nuevo en FlexiWash · "}{serviceLabels(e).join(" · ")}</p>
+          <BadgeRow badges={providerBadges(e, allRatings)} />
         </div>
         <h3 className="fw-section-title">Verificación de seguridad</h3>
         <div className="fw-verify-row">
@@ -1150,9 +1157,8 @@ export default function App() {
           <div><FileCheck2 size={22} /><span>Antecedentes</span></div>
           <div><HeartHandshake size={22} /><span>Cobertura</span></div>
         </div>
-        <h3 className="fw-section-title">Comentarios de clientes</h3>
-        {comments.map((c) => <div key={c.reqId} className="fw-card">“{c.comment}”</div>)}
-        <div className="fw-card">“Muy puntual y cuidadoso con mi auto, quedó impecable.”</div>
+        <h3 className="fw-section-title">Servicios anteriores</h3>
+        <PastServices providerId={e.id} ratings={allRatings} photos={allPhotos} requests={sharedReqs} />
       </div>
     );
   };
@@ -1169,6 +1175,7 @@ export default function App() {
         ))}
       </div>
       <textarea className="fw-textarea" placeholder="Añade un comentario…" value={comment} onChange={(e) => setComment(e.target.value)} />
+      {(() => { const g = ratings.filter(Boolean); const b = g.length ? serviceBadge(g.reduce((a, c) => a + c, 0) / g.length) : null; return b ? <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 8px" }}><span className="fw-muted">Insignia para este servicio:</span><Badge b={b} /></div> : null; })()}
       <div className="fw-summary-bar">
         <button className="fw-btn-primary fw-btn-block" disabled={!ratings.some((v) => v > 0)} onClick={finishRating}>Enviar calificación</button>
       </div>
@@ -1203,7 +1210,7 @@ export default function App() {
                 <span>{money(o.total)}</span>
               </div>
               <p className="fw-muted">{o.lines.map((l) => l.name).join(", ")}</p>
-              <div className="fw-stars-mini">{"★".repeat(Math.round(o.ratings.filter(Boolean).reduce((a, b) => a + b, 0) / (o.ratings.filter(Boolean).length || 1)) || 0)}</div>
+              {(() => { const g = o.ratings.filter(Boolean); const avg = g.length ? g.reduce((a, b) => a + b, 0) / g.length : 0; return <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div className="fw-stars-mini">{"★".repeat(Math.round(avg))}</div><Badge b={serviceBadge(avg)} size={10} /></div>; })()}
             </div>
           ))}
         </div>
@@ -1268,6 +1275,10 @@ export default function App() {
 
       <button className="fw-teamlink" onClick={() => push("team")}>
         Ver equipo de limpieza disponible <ChevronLeft size={16} className="fw-rot-r" />
+      </button>
+
+      <button className="fw-teamlink" onClick={() => setSupportOpen(true)}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Headphones size={16} /> Asistencia y ayuda</span> <ChevronLeft size={16} className="fw-rot-r" />
       </button>
 
       <button
@@ -1338,6 +1349,7 @@ export default function App() {
             <div>
               <strong>{e.name}</strong>
               <div className="fw-stars-mini">{"★".repeat(Math.round(e.rating))} <span className="fw-muted">{ratingText(e)}</span></div>
+              <BadgeRow badges={providerBadges(e, allRatings)} max={3} />
               <p className="fw-muted">{e.years ? `${yearsLabel(e.years)} · ` : ""}{serviceLabels(e).join(", ")}</p>
             </div>
           </button>
@@ -1411,6 +1423,7 @@ export default function App() {
         <div className="fw-content">{(screens[screen] || renderHome)()}</div>
         {showNotifs && renderNotifSheet()}
         {chatReqId != null && <ChatView reqId={chatReqId} me="client" title={chatName} subtitle="Tu prestador" onClose={() => setComms(null)} />}
+        {supportOpen && <SupportChat role="client" threadId={supportThread} name={profile.nombre} onClose={() => setSupportOpen(false)} />}
         {comms?.type === "call" && currentOrder && <CallView reqId={currentOrder.id} me="client" name={currentOrder.employee?.name} onClose={() => setComms(null)} />}
         {showBottomNav && <BottomNav active={activeTab} onChange={goTab} />}
       </div>
