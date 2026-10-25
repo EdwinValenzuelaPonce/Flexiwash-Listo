@@ -54,3 +54,19 @@ export default function PastServices({ providerId, ratings, photos, requests }) 
     </>
   );
 }
+
+// Vista previa compacta para la pantalla "Elige tu prestador": últimos comentarios y fotos, antes de contratar.
+export function ProviderPreview({ providerId, ratings, photos, onOpen }) {
+  const mine = ratings.filter((r) => r.providerId === providerId).sort((a, b) => b.ts - a.ts);
+  if (!mine.length) return <p className="fw-muted" style={{ margin: "4px 4px 0", fontSize: 11.5 }}>Aún sin reseñas de clientes.</p>;
+  const comments = mine.filter((r) => r.comment).slice(0, 2);
+  const pics = mine.flatMap((r) => photos.filter((p) => p.reqId === r.reqId).sort((a, b) => a.ts - b.ts)).slice(0, 4);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "6px 4px 0" }}>
+      <style>{`.fwv-c{margin:0;font-size:12px;color:var(--fw-ink-soft);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.fwv-p{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.fwv-p button{padding:0;border:0;border-radius:8px;overflow:hidden;aspect-ratio:1;cursor:pointer;background:#e6eeee}.fwv-p img{width:100%;height:100%;object-fit:cover;display:block}`}</style>
+      {comments.map((r) => <p key={r.reqId} className="fwv-c"><span className="fw-stars-mini">{"★".repeat(Math.round(r.avg))}</span> “{r.comment}”</p>)}
+      {pics.length > 0 && <div className="fwv-p">{pics.map((p, i) => <button key={p.id} onClick={onOpen} aria-label={`Ver foto ${i + 1} de servicios anteriores`}><img src={p.url} alt={`Servicio anterior ${i + 1}`} loading="lazy" /></button>)}</div>}
+      <button className="fw-linklike" style={{ alignSelf: "flex-start" }} onClick={onOpen}>Ver las {mine.length} reseñas y fotos ›</button>
+    </div>
+  );
+}

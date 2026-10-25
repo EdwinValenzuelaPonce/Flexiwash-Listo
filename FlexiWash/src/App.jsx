@@ -4,7 +4,7 @@ import ProviderPanel from "./Provider.jsx";
 import TrackingMap, { PlaceMap } from "./TrackingMap.jsx";
 import { useRequests, saveRequest, startCall, useAllMessages, useProviderCfgs, useRatings, saveRating, liveMember, usePhotos, resetDemo, useProviders, providerToMember } from "./store.js";
 import ProviderRegister from "./ProviderRegister.jsx";
-import PastServices from "./PastServices.jsx";
+import PastServices, { ProviderPreview } from "./PastServices.jsx";
 import SupportChat from "./Support.jsx";
 import { Badge, BadgeRow, providerBadges, serviceBadge } from "./badges.jsx";
 import { ChatView, CallView, useIncomingCall } from "./Comms.jsx";
@@ -929,7 +929,8 @@ export default function App() {
       ) : (
         <div className="fw-provider-list">
           {availableProviders.map((m) => (
-            <button key={m.id} className={`fw-employee-card fw-pick ${chosenProvider?.id === m.id ? "is-on" : ""}`} aria-pressed={chosenProvider?.id === m.id} onClick={() => setChosenProvider(m)}>
+            <div key={m.id}>
+            <button className={`fw-employee-card fw-pick ${chosenProvider?.id === m.id ? "is-on" : ""}`} aria-pressed={chosenProvider?.id === m.id} onClick={() => setChosenProvider(m)}>
               <div className="fw-avatar"><User size={20} /></div>
               <div>
                 <strong>{m.name}</strong>
@@ -937,6 +938,8 @@ export default function App() {
                 <BadgeRow badges={providerBadges(m, allRatings)} max={3} />
               </div>
             </button>
+            <ProviderPreview providerId={m.id} ratings={allRatings} photos={allPhotos} onOpen={() => { setSelectedEmployee(m); push("employeeDetail"); }} />
+            </div>
           ))}
         </div>
       )}
@@ -1141,8 +1144,9 @@ export default function App() {
   const renderEmployeeDetail = () => {
     const e = selectedEmployee && (team.find((t) => t.id === selectedEmployee.id) || selectedEmployee);
     if (!e) return null;
+    const fromPicker = stack[stack.length - 2] === "providers"; // llegó desde "Elige tu prestador"
     return (
-      <div className="fw-screen">
+      <div className={`fw-screen ${fromPicker ? "fw-screen--pad-bottom" : ""}`}>
         <TopBar title="Empleado" onBack={pop} />
         <div className="fw-center">
           <div className="fw-avatar fw-avatar--lg"><User size={30} /></div>
@@ -1159,6 +1163,11 @@ export default function App() {
         </div>
         <h3 className="fw-section-title">Servicios anteriores</h3>
         <PastServices providerId={e.id} ratings={allRatings} photos={allPhotos} requests={sharedReqs} />
+        {fromPicker && (
+          <div className="fw-summary-bar">
+            <button className="fw-btn-primary fw-btn-block" onClick={() => { setChosenProvider(availableProviders.find((x) => x.id === e.id) || e); pop(); }}>Elegir a {e.name.split(" ")[0]}</button>
+          </div>
+        )}
       </div>
     );
   };
