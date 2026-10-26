@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import { useRequests, updateRequest, setProviderLoc, useAllMessages, startCall, setProviderCfg, useRatings, defaultSchedule, usePhotos, uploadPhoto, deletePhoto, MAX_PHOTOS, useLedger, addLedger } from "./store.js";
-import { COMMISSION, MIN_WITHDRAW, DEBT_LIMIT, BASE_BALANCE, netOf, commissionOf, providerLedger } from "./ledger.js";
+import { COMMISSION, MIN_WITHDRAW, MIN_TOPUP, MAX_TOPUP, DEBT_LIMIT, BASE_BALANCE, netOf, commissionOf, providerLedger } from "./ledger.js";
 import { compressImage } from "./photos.js";
 import { useGeolocation, distKm } from "./geo.js";
 import { ProviderMap } from "./TrackingMap.jsx";
@@ -154,9 +154,12 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
   const L = providerLedger({ providerId: me, requests: all, ledger: ledgerRows, base: me === team[0]?.id ? BASE_BALANCE : 0 });
   const balance = L.balance;
   const withdrawals = ledgerRows.filter((l) => l.providerId === me && l.kind === "withdrawal").sort((a, b) => b.ts - a.ts);
+  const topups = ledgerRows.filter((l) => l.providerId === me && l.kind === "topup").sort((a, b) => b.ts - a.ts);
   const debtPayments = ledgerRows.filter((l) => l.providerId === me && l.kind === "debt_payment").sort((a, b) => b.ts - a.ts);
   const [payAmt, setPayAmt] = useState("");
   const [payVia, setPayVia] = useState("SPEI");
+  const [topAmt, setTopAmt] = useState("");
+  const [topMsg, setTopMsg] = useState(null);
   const [filter, setFilter] = useState("Todos");
   const [profile, setProfile] = useState(() => ({ nombre: meLive?.name || "", telefono: meLive?.phone || "", zona: meLive?.zone || "", clabe: "", services: (meLive?.services || []).map((s) => s[0].toUpperCase() + s.slice(1)) }));
   const [editing, setEditing] = useState(false);
@@ -180,6 +183,17 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
     if (!/^\d{18}$/.test(profile.clabe)) return setMsg({ err: "Captura una CLABE de 18 dígitos en tu perfil." });
     addLedger({ providerId: me, kind: "withdrawal", amount: n, clabe: profile.clabe.slice(-4), status: "En proceso" });
     setAmount(""); setMsg({ ok: "Solicitud enviada. Se depositará en 1 a 2 días hábiles." });
+  };
+  // DEMO: la recarga se acredita al instante. En producción (Stripe/OXXO Pay) el saldo se acredita cuando la pasarela confirma el pago (webhook).
+  // La comisión pendiente se cobra sola: providerLedger() descuenta la deuda del saldo en cuanto hay dinero disponible.
+  const topUp = (via) => {
+    const n = Math.round(parseFloat(topAmt) * 100) / 100;
+    if (!Number.isFinite(n) || n < MIN_TOPUP) return setTopMsg({ err: `La recarga mínima es ${money(MIN_TOPUP)}.` });
+    if (n > MAX_TOPUP) return setTopMsg({ err: `El máximo por recarga es ${money(MAX_TOPUP)}.` });
+    const debtNow = L.debt, offsetNow = Math.min(n, debtNow);
+    addLedger({ providerId: me, kind: "topup", amount: n, method: via, status: "Acreditado" });
+    setTopAmt("");
+    setTopMsg({ ok: offsetNow > 0 ? `Recarga de ${money(n)} acreditada. Se cobraron ${money(offsetNow)} de comisión pendiente automáticamente.` : `Recarga de ${money(n)} acreditada a tu saldo.` });
   };
   // DEMO: el pago se registra al instante. En producción se confirma con la pasarela de pago o la conciliación bancaria.
   const payDebt = () => {
@@ -285,11 +299,22 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
     <>
       <Head title="Ganancias y retiros" />
       <div className="fw-wallet-card"><span>Saldo disponible</span><strong>{money(balance)}</strong><p>{jobs.length} servicios completados · comisión {COMMISSION * 100}%</p></div>
+      <section className="fw-section"><h3>Recargar saldo</h3>
+        <div className="fw-card fwp-col">
+          <small className="fw-muted">Mete dinero a tu saldo y tu comisión pendiente se cobra sola. Lo que sobre queda disponible.</small>
+          <input className="fw-input" inputMode="decimal" aria-label="Monto a recargar" placeholder={`Monto (mín. ${money(MIN_TOPUP)})`} value={topAmt} onChange={(e) => { setTopAmt(e.target.value.replace(/[^\d.]/g, "").replace(/^(\d*\.?\d{0,2}).*$/, "$1")); setTopMsg(null); }} />
+          <div className="fwp-chips">{[100, 200, 500, 1000].map((v) => <button key={v} type="button" className={`fwp-chip ${+topAmt === v ? "is-on" : ""}`} onClick={() => { setTopAmt(String(v)); setTopMsg(null); }}>{money(v)}</button>)}</div>
+          <button className="fw-btn-primary fw-btn-block" onClick={() => topUp("OXXO")}>Pagar en OXXO {+topAmt >= MIN_TOPUP ? money(+topAmt) : ""}</button>
+          <div className="fwp-chips">{["SPEI", "Tarjeta"].map((v) => <button key={v} type="button" className="fwp-chip" onClick={() => topUp(v)}>Recargar con {v}</button>)}</div>
+          {topMsg?.err && <p className="fwp-err" role="alert">{topMsg.err}</p>}
+          {topMsg?.ok && <p className="fwp-ok" role="status">{topMsg.ok}</p>}
+        </div>
+      </section>
       <section className="fw-section"><h3>Comisión por servicios en efectivo</h3>
         <div className="fw-card fwp-col">
           <div className="fw-order-line"><span>Comisión pendiente</span><strong style={{ color: L.debt > 0 ? "var(--fw-error)" : undefined }}>{money(L.debt)}</strong></div>
           <div className="fwp-bar" aria-hidden="true"><i className={L.blocked ? "bad" : ""} style={{ width: `${Math.min(100, (L.debt / DEBT_LIMIT) * 100)}%` }} /></div>
-          <small className="fw-muted">Límite {money(DEBT_LIMIT)}. Arriba de ese monto no recibes solicitudes nuevas hasta pagar. Lo que debes se descuenta primero de tus ganancias por servicios pagados en la app.</small>
+          <small className="fw-muted">Límite {money(DEBT_LIMIT)}. Arriba de ese monto no recibes solicitudes nuevas hasta pagar. Lo que debes se descuenta solo de tu saldo (ganancias por servicios en la app y recargas); si no alcanza, recarga arriba.</small>
           {L.offset > 0 && <small className="fw-muted">Ya se descontaron {money(L.offset)} de tus ganancias.</small>}
           {L.blocked && <div className="fwp-block" role="alert">Cuenta bloqueada para nuevas solicitudes hasta que pagues.</div>}
           {L.debt > 0 && (
@@ -312,6 +337,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
       </section>
       <section className="fw-section"><h3>Movimientos</h3>
         <div className="fw-card">
+          {topups.map((w) => <div className="fw-order-line" key={w.id}><span>Recarga · {w.method}</span><strong style={{ color: "var(--fw-ok, inherit)" }}>+{money(w.amount)}</strong></div>)}
           {withdrawals.map((w) => <div className="fw-order-line" key={w.id}><span>Retiro · CLABE ···{w.clabe} ({w.status})</span><strong>-{money(w.amount)}</strong></div>)}
           {debtPayments.map((w) => <div className="fw-order-line" key={w.id}><span>Pago de comisión · {w.method}</span><strong>-{money(w.amount)}</strong></div>)}
           {jobs.slice(0, 5).map((j) => j.payMethod === "efectivo"
