@@ -20,9 +20,9 @@ const MAX_BODY = 8 * 1024 * 1024; // 8 MB por petición
 const MAX_PHOTOS_PER_REQ = 4;
 
 // Campo que identifica a cada elemento en cada colección.
-const KEYS = { requests: "id", messages: "id", calls: "reqId", providerCfg: "id", ratings: "reqId", photos: "id", providers: "id", support: "id" };
+const KEYS = { requests: "id", messages: "id", calls: "reqId", providerCfg: "id", ratings: "reqId", photos: "id", providers: "id", support: "id", ledger: "id", invoices: "id" };
 // Máximo de elementos por colección (evita que crezca sin límite).
-const LIMITS = { requests: 200, messages: 600, calls: 100, providerCfg: 50, ratings: 500, photos: 400, providers: 100, support: 500 };
+const LIMITS = { requests: 200, messages: 600, calls: 100, providerCfg: 50, ratings: 500, photos: 400, providers: 100, support: 500, ledger: 1000, invoices: 500 };
 
 fs.mkdirSync(UPLOADS, { recursive: true });
 

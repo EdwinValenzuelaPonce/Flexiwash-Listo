@@ -28,6 +28,7 @@ export function curpAge(curp) {
   return age;
 }
 
+export const CHECK_LABELS = { curp: "CURP con formato válido", curpDigit: "Dígito verificador de la CURP", age: "Mayor de 18 años", elector: "Clave de elector válida", vigencia: "INE vigente", front: "INE (frente) entregado", back: "INE (reverso) entregado", selfie: "Selfie con INE entregada" };
 export const validClaveElector = (v) => /^[A-Z]{6}\d{8}[HM]\d{3}$/.test(v.trim().toUpperCase());
 export const validVigencia = (v) => { const y = +v; return /^\d{4}$/.test(String(v)) && y >= new Date().getFullYear() && y <= new Date().getFullYear() + 15; };
 

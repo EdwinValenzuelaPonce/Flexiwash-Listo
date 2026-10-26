@@ -2,7 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import logoFlexiWash from "./assets/LogoFlexiWash.webp";
 import ProviderPanel from "./Provider.jsx";
 import TrackingMap, { PlaceMap } from "./TrackingMap.jsx";
-import { useRequests, saveRequest, startCall, useAllMessages, useProviderCfgs, useRatings, saveRating, liveMember, usePhotos, resetDemo, useProviders, providerToMember } from "./store.js";
+import { useRequests, saveRequest, startCall, useAllMessages, useProviderCfgs, useRatings, saveRating, liveMember, usePhotos, resetDemo, useProviders, providerToMember, useLedger, useInvoices } from "./store.js";
+import Billing from "./Billing.jsx";
+import { baseFor, providerLedger } from "./ledger.js";
+import { CHECK_LABELS } from "./identity.js";
 import ProviderRegister from "./ProviderRegister.jsx";
 import PastServices, { ProviderPreview } from "./PastServices.jsx";
 import SupportChat from "./Support.jsx";
@@ -15,7 +18,7 @@ import {
   FileCheck2, HeartHandshake, Camera, CreditCard, Smartphone, Mail, User,
   Home as HomeIcon, Clock, MapPin, Wallet, RefreshCw, CheckCircle2, Truck,
   Sparkles, Sofa, BedDouble, UtensilsCrossed, Bath, Wind, Droplet, Fan,
-  SprayCan, Car, AlertTriangle, X, Pencil, Camera as CameraIcon, MessageCircle, Headphones
+  SprayCan, Car, AlertTriangle, X, Pencil, Camera as CameraIcon, MessageCircle, Headphones, FileText
 } from "lucide-react";
 
 /* ---------------------------------------------------------------------- */
@@ -130,6 +133,9 @@ const isAvailable = (m, date, hour, cats, reqs) =>
   cats.every((c) => m.services.includes(c)) && inSchedule(m, date, hour)
   && !reqs.some((r) => r.providerId === m.id && (r.status === "pending" || r.status === "accepted") && r.slot?.date === isoDate(date) && r.slot?.hour === hour);
 
+
+// Texto de la cobertura que se muestra al cliente. AJÚSTALO a las condiciones reales de FlexiWash (monto, plazo, exclusiones).
+const COVERAGE_TEXT = "Los servicios solicitados y pagados por la app cuentan con la cobertura de FlexiWash por daños ocasionados durante el servicio, sujeta a términos y condiciones. Si ocurre un incidente, repórtalo desde Asistencia y ayuda lo antes posible y conserva las fotos del servicio.";
 
 const RATING_QUESTIONS = [
   "¿Qué tan satisfecho(a) estás con la calidad del servicio?",
@@ -354,8 +360,19 @@ export default function App() {
   const [simulateFail, setSimulateFail] = useState(false);
   const [showDenied, setShowDenied] = useState(false);
 
-  const [currentOrder, setCurrentOrder] = usePersistentState("order", null);
-  const [trackingStep, setTrackingStep] = usePersistentState("trackStep", 0);
+  // Servicios en curso: el cliente puede tener varios a la vez (incluso con prestadores distintos).
+  // `currentOrder` es el servicio ENFOCADO (el que muestran seguimiento, chat, llamada y calificación).
+  const [activeOrders, setActiveOrders] = usePersistentState("activeOrders", []);
+  const [focusId, setFocusId] = usePersistentState("focusOrder", null);
+  const [legacyOrder, setLegacyOrder] = usePersistentState("order", null); // formato anterior (un solo servicio)
+  useEffect(() => { if (legacyOrder) { setActiveOrders((l) => (l.some((o) => o.id === legacyOrder.id) ? l : [...l, legacyOrder])); setLegacyOrder(null); } }, []); // eslint-disable-line
+  const currentOrder = activeOrders.find((o) => o.id === focusId) || activeOrders[0] || null;
+  const setCurrentOrder = (o) => {
+    if (o) { setActiveOrders((l) => [...l.filter((x) => x.id !== o.id), o]); setFocusId(o.id); }
+    else if (currentOrder) { const id = currentOrder.id; setActiveOrders((l) => l.filter((x) => x.id !== id)); setFocusId(null); }
+  };
+  const [fiscal, setFiscal] = usePersistentState("fiscal", null);       // datos fiscales del cliente
+  const [wantsInvoice, setWantsInvoice] = useState(false);
   const [history, setHistory] = usePersistentState("orders", []);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [slotDate, setSlotDate] = useState(() => nextDays()[0]);
@@ -373,6 +390,7 @@ export default function App() {
   const [orderNote, setOrderNote] = useState("");
   const [comms, setComms] = useState(null);
   const [supportOpen, setSupportOpen] = useState(false);
+  const [verifyInfo, setVerifyInfo] = useState(null);
   // Identificador del hilo de asistencia de este dispositivo (cliente)
   const supportThread = useMemo(() => { try { let v = window.localStorage.getItem("fw:deviceId"); if (!v) { v = Math.random().toString(36).slice(2, 10); window.localStorage.setItem("fw:deviceId", v); } return `client-${v}`; } catch { return "client-anon"; } }, []);
   const incomingId = useIncomingCall(currentOrder ? [currentOrder.id] : [], "client");
@@ -395,32 +413,45 @@ export default function App() {
   const team = useMemo(
     () => [...TEAM, ...registered.filter((p) => p.verified).map(providerToMember)].map((m) => liveMember(m, cfgs, allRatings)),
     [cfgs, allRatings, registered]);
+  const ledgerRows = useLedger();
+  const invoices = useInvoices();
+  // Un prestador con comisión en efectivo pendiente por encima del límite no recibe solicitudes nuevas (ver ledger.js)
+  const isBlocked = (id) => providerLedger({ providerId: id, requests: sharedReqs, ledger: ledgerRows, base: baseFor(id, team) }).blocked;
+  const canTake = (m, d, h, cats) => !isBlocked(m.id) && isAvailable(m, d, h, cats, sharedReqs);
   const [providerMe, setProviderMe] = usePersistentState("providerMe", 1);
   const [pl, setPl] = useState({ tel: "", pin: "", err: "" });
   const [seen, setSeen] = usePersistentState("seen", {});
   const curReq = currentOrder ? sharedReqs.find((x) => x.id === currentOrder.id) : null;
+  const reqOf = (o) => sharedReqs.find((x) => x.id === o.id);
+  const stepOf = (o) => { const r = reqOf(o); return !r ? 0 : r.status === "done" ? 3 : r.status === "accepted" ? r.step : 0; };
+  const isDoneOrder = (o) => reqOf(o)?.status === "done";
+  const trackingStep = currentOrder ? stepOf(currentOrder) : 0;
   const allPhotos = usePhotos();
   const orderPhotos = currentOrder ? allPhotos.filter((p) => p.reqId === currentOrder.id).sort((a, b) => a.ts - b.ts).slice(0, 4) : [];
+  const ordersKey = activeOrders.map((o) => { const r = sharedReqs.find((x) => x.id === o.id); return `${o.id}:${r ? `${r.status}:${r.step}` : "-"}`; }).join("|");
   useEffect(() => {
-    const r = curReq;
-    if (!r) return;
-    const key = `${r.status}:${r.step}`;
-    if (seen[r.id] === key) return;
-    setSeen((m) => ({ ...m, [r.id]: key }));
-    const who = r.providerName;
-    if (r.status === "declined") {
-      const cb = Math.round(currentOrder.total * 0.03 * 100) / 100;
-      setWalletBalance((b) => Math.round((b + currentOrder.total - cb) * 100) / 100);
-      notify("Solicitud rechazada", `${who} no pudo tomar tu servicio. Te reembolsamos ${money(currentOrder.total - cb)} al monedero.`, { go: "tracking" });
-    } else if (r.status === "done") {
-      setTrackingStep(3);
-      notify("Servicio finalizado", "Ya puedes calificar tu experiencia.", { go: "rating" });
-    } else if (r.status === "accepted") {
-      setTrackingStep(r.step);
-      notify(...[[`${who} aceptó tu servicio`, "Confirmó tu horario."], ["Tu prestador va en camino", `${who} se dirige a ${r.address?.street || "tu dirección"}.`], ["Servicio en proceso", `${who} comenzó tu servicio.`]][Math.min(r.step, 2)], { go: "tracking" });
-    }
+    const upd = {};
+    activeOrders.forEach((o) => {
+      const r = sharedReqs.find((x) => x.id === o.id);
+      if (!r) return;
+      const key = `${r.status}:${r.step}`;
+      if (seen[r.id] === key) return;
+      upd[r.id] = key;
+      const who = r.providerName, meta = { go: "tracking", reqId: r.id };
+      if (r.status === "declined") {
+        const cb = Math.round(o.total * 0.03 * 100) / 100;
+        const paid = o.payMethod !== "efectivo"; // en efectivo no se cobró nada que reembolsar
+        setWalletBalance((b) => Math.round((b + (paid ? o.total : 0) - cb) * 100) / 100);
+        notify("Solicitud rechazada", paid ? `${who} no pudo tomar tu servicio. Te reembolsamos ${money(o.total - cb)} al monedero.` : `${who} no pudo tomar tu servicio. No se te cobró nada.`, meta);
+      } else if (r.status === "done") {
+        notify("Servicio finalizado", "Ya puedes calificar tu experiencia.", { go: "rating", reqId: r.id });
+      } else if (r.status === "accepted") {
+        notify(...[[`${who} aceptó tu servicio`, "Confirmó tu horario."], ["Tu prestador va en camino", `${who} se dirige a ${r.address?.street || "tu dirección"}.`], ["Servicio en proceso", `${who} comenzó tu servicio.`]][Math.min(r.step, 2)], meta);
+      }
+    });
+    if (Object.keys(upd).length) setSeen((m) => ({ ...m, ...upd }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curReq?.status, curReq?.step, currentOrder?.id]);
+  }, [ordersKey]);
 
   const confirmPayment = () => {
     if (paymentMethod === "tarjeta" && Object.keys(cardErr).length) { setShowCardErr(true); return; }
@@ -433,7 +464,7 @@ export default function App() {
       return;
     }
     const pickedLive = team.find((m) => m.id === chosenProvider?.id);
-    if (!pickedLive || !isAvailable(pickedLive, slotDate, slotHour, cartCats, sharedReqs)) {
+    if (!pickedLive || !canTake(pickedLive, slotDate, slotHour, cartCats)) {
       notify("Horario no disponible", "Ese horario acaba de ocuparse o el prestador cambió su agenda. Elige otro.");
       setSlotHour(null); setChosenProvider(null);
       setStack((st) => { const k = st.lastIndexOf("schedule"); return k >= 0 ? st.slice(0, k + 1) : st; });
@@ -448,8 +479,11 @@ export default function App() {
       address,
       note: orderNote.trim(),
       slot: { date: isoDate(slotDate), label: dayLabel(slotDate), hour: slotHour },
+      payMethod: paymentMethod,
+      wantsInvoice: wantsInvoice && !!fiscal && paymentMethod !== "efectivo",
     };
     setCurrentOrder(order);
+    setWantsInvoice(false);
     const cashback = Math.round(order.total * 0.03 * 100) / 100;
     setWalletBalance((b) => Math.round(((paymentMethod === "monedero" ? b - order.total : b) + cashback) * 100) / 100);
     setCard({ nombre: "", numero: "", cvv: "", exp: "" });
@@ -458,14 +492,13 @@ export default function App() {
     setSlotHour(null);
     setChosenProvider(null);
     setCart({ autos: {}, hogar: {}, muebles: {}, extras: {} });
-    setTrackingStep(0);
     saveRequest({
       id: order.id, providerId: chosenProvider.id, providerName: chosenProvider.name,
       category: { autos: "Autos", hogar: "Hogar", muebles: "Muebles" }[cartCats[0]] || "Hogar",
       service: order.lines.map((l) => l.name).join(", "),
       detail: order.lines.map((l) => `${l.qty}× ${l.name}`).join(" · "),
       zone: address?.colonia || "", address, note: order.note, slot: order.slot,
-      when: `${order.slot.label} · ${pad(order.slot.hour)}:00`, price: totals.subtotal,
+      when: `${order.slot.label} · ${pad(order.slot.hour)}:00`, price: totals.subtotal, total: order.total, payMethod: paymentMethod,
     });
     setSeen((m) => ({ ...m, [order.id]: "pending:0" }));
     notify("Solicitud enviada", `Esperando confirmación de ${order.employee?.name}.`, { go: "tracking" });
@@ -518,10 +551,10 @@ export default function App() {
   const [msgSeen, setMsgSeen] = usePersistentState("msgSeenTs", () => Date.now());
   // Chat abierto: puede venir de una notificación (con reqId propio) o del botón del seguimiento (pedido actual)
   const chatReqId = comms?.type === "chat" ? (comms.reqId ?? currentOrder?.id ?? null) : null;
-  const chatOrder = chatReqId != null ? [currentOrder, ...history].find((o) => o && o.id === chatReqId) : null;
+  const chatOrder = chatReqId != null ? [...activeOrders, ...history].find((o) => o && o.id === chatReqId) : null;
   const chatName = comms?.title || chatOrder?.employee?.name || "Tu prestador";
   useEffect(() => {
-    const orders = [currentOrder, ...history].filter(Boolean);
+    const orders = [...activeOrders, ...history].filter(Boolean);
     if (!orders.length) return;
     const byId = Object.fromEntries(orders.map((o) => [o.id, o]));
     const fresh = allMsgs.filter((m) => byId[m.reqId] && m.from === "provider" && m.ts > msgSeen);
@@ -534,7 +567,7 @@ export default function App() {
       notify(`Mensaje de ${who}`, last.text.length > 70 ? last.text.slice(0, 70) + "…" : last.text, { kind: "message", reqId: id, who });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allMsgs.length, currentOrder?.id]);
+  }, [allMsgs.length, activeOrders.length]);
   // Al abrir un chat (desde donde sea) sus avisos de mensaje quedan leídos
   useEffect(() => {
     if (chatReqId == null) return;
@@ -548,7 +581,8 @@ export default function App() {
   const notifTarget = (n) => {
     let t = isMsgNotif(n) ? "chat" : n.go
       || (/finalizado/i.test(n.title) ? "rating" : /aceptó|camino|proceso|rechazada|enviada/i.test(n.title) ? "tracking" : /Depósito/.test(n.title) ? "wallet" : null);
-    if ((t === "tracking" || t === "rating") && !currentOrder) t = "history"; // el servicio ya se calificó
+    const live = n.reqId != null ? activeOrders.some((o) => o.id === n.reqId) : !!currentOrder;
+    if ((t === "tracking" || t === "rating") && !live) t = "history"; // el servicio ya se calificó
     return t;
   };
   const NOTIF_CTA = { chat: "Ver mensaje ›", tracking: "Ver seguimiento ›", rating: "Calificar servicio ›", wallet: "Ver monedero ›", history: "Ver actividad ›" };
@@ -558,7 +592,7 @@ export default function App() {
     setNotifs((l) => l.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
     const t = notifTarget(n);
     if (t === "chat") { setComms({ type: "chat", reqId: n.reqId ?? currentOrder?.id, title: n.who }); return; }
-    if (t === "tracking" || t === "rating") { goTab("home"); push(t); return; }
+    if (t === "tracking" || t === "rating") { if (n.reqId != null) setFocusId(n.reqId); goTab("home"); push(t); return; }
     if (t === "wallet" || t === "history") { goTab(t); return; }
     goTab("home");
   };
@@ -578,30 +612,35 @@ export default function App() {
   const cartCats = ["autos", "hogar", "muebles"].filter((c) => Object.keys(cart[c]).length > 0);
   const now = new Date();
   const hourIsPast = (h) => isoDate(slotDate) === isoDate(now) && h <= now.getHours();
-  const availableProviders = slotHour == null ? [] : team.filter((m) => isAvailable(m, slotDate, slotHour, cartCats, sharedReqs));
+  const availableProviders = slotHour == null ? [] : team.filter((m) => canTake(m, slotDate, slotHour, cartCats));
   const canServe = (m) => cartCats.every((c) => m.services.includes(c));
   const dayOffered = (d) => team.some((m) => canServe(m) && m.available && m.schedule[dayIdx(d)]?.on);
   const hoursInAgenda = HOURS.filter((h) => team.some((m) => canServe(m) && inSchedule(m, slotDate, h)));
-  const hourFree = (h) => team.some((m) => isAvailable(m, slotDate, h, cartCats, sharedReqs));
+  const hourFree = (h) => team.some((m) => canTake(m, slotDate, h, cartCats));
 
   // Servicio en curso: siempre se puede volver a su seguimiento o calificarlo desde Inicio y Actividad
-  const serviceDone = !!currentOrder && (trackingStep >= 3 || curReq?.status === "done");
-  const serviceDeclined = curReq?.status === "declined";
-  const activeLabel = serviceDeclined ? "Solicitud rechazada" : serviceDone ? "Servicio finalizado" : curReq?.status === "accepted" ? (trackingStep === 0 ? "Confirmado" : STEPS[Math.min(trackingStep, 3)]) : "Esperando confirmación";
-  const renderActiveCard = (withMap) => currentOrder && (
+  const serviceDone = !!currentOrder && isDoneOrder(currentOrder);
+  const labelOf = (o) => { const r = reqOf(o), st = stepOf(o); return r?.status === "declined" ? "Solicitud rechazada" : r?.status === "done" ? "Servicio finalizado" : r?.status === "accepted" ? (st === 0 ? "Confirmado" : STEPS[Math.min(st, 3)]) : "Esperando confirmación"; };
+  const renderActiveCard = (withMap) => activeOrders.length > 0 && (
     <section className="fw-section">
-      <h3>{serviceDone ? "Califica tu servicio" : "Tu servicio"}</h3>
-      <div className="fw-card fw-active">
-        <div className="fw-active-top">
-          <div className="fw-avatar"><User size={20} /></div>
-          <div><strong>{currentOrder.employee?.name || "Tu prestador"}</strong><span className="fw-muted">{activeLabel} · Solicitud #{currentOrder.id}</span></div>
-        </div>
-        {withMap && <TrackingMap reqId={curReq?.id} compact onOpen={() => push("tracking")} step={trackingStep} status={curReq?.status || "pending"} providerName={currentOrder.employee?.name} providerLoc={curReq?.providerLoc} street={currentOrder.address?.street} />}
-        <div className="fw-active-actions">
-          <button className={serviceDone ? "fw-btn-outline" : "fw-btn-primary"} onClick={() => push("tracking")}>Ver seguimiento</button>
-          {serviceDone && <button className="fw-btn-primary" onClick={() => push("rating")}>Calificar servicio</button>}
-        </div>
-      </div>
+      <h3>{activeOrders.length > 1 ? `Tus servicios (${activeOrders.length})` : serviceDone ? "Califica tu servicio" : "Tu servicio"}</h3>
+      {activeOrders.map((o, idx) => {
+        const r = reqOf(o), st = stepOf(o), done = r?.status === "done";
+        return (
+          <div key={o.id} className="fw-card fw-active" style={idx > 0 ? { marginTop: 10 } : undefined}>
+            <div className="fw-active-top">
+              <div className="fw-avatar"><User size={20} /></div>
+              <div><strong>{o.employee?.name || "Tu prestador"}</strong><span className="fw-muted">{labelOf(o)} · Solicitud #{o.id}</span></div>
+            </div>
+            <div className="fwm-bar" aria-hidden="true"><i style={{ width: `${r?.status === "declined" ? 0 : !r || r.status === "pending" ? 8 : ((st + 1) / 4) * 100}%` }} /></div>
+            {withMap && idx === 0 && <TrackingMap reqId={r?.id} compact onOpen={() => { setFocusId(o.id); push("tracking"); }} step={st} status={r?.status || "pending"} providerName={o.employee?.name} providerLoc={r?.providerLoc} street={o.address?.street} />}
+            <div className="fw-active-actions">
+              <button className={done ? "fw-btn-outline" : "fw-btn-primary"} onClick={() => { setFocusId(o.id); push("tracking"); }}>Ver seguimiento</button>
+              {done && <button className="fw-btn-primary" onClick={() => { setFocusId(o.id); push("rating"); }}>Calificar servicio</button>}
+            </div>
+          </div>
+        );
+      })}
     </section>
   );
   const renderNotifSheet = () => (
@@ -1015,7 +1054,7 @@ export default function App() {
           { id: "monedero", label: `Monedero FlexiWash · ${money(walletBalance)}`, Icon: Wallet },
         ].map(({ id, label, Icon }) => (
           <div key={id} className={`fw-payopt ${paymentMethod === id ? "is-active" : ""}`}>
-            <button className="fw-payopt-head" onClick={() => setPaymentMethod(id)}>
+            <button className="fw-payopt-head" disabled={id === "efectivo" && wantsInvoice} onClick={() => setPaymentMethod(id)}>
               <span className="fw-radio">{paymentMethod === id && <span />}</span>
               <Icon size={20} />
               <span>{label}</span>
@@ -1042,6 +1081,15 @@ export default function App() {
             )}
           </div>
         ))}
+      </div>
+      <div className="fw-card" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <label className="fw-checkline">
+          <input type="checkbox" disabled={!fiscal} checked={wantsInvoice && !!fiscal} onChange={(e) => { setWantsInvoice(e.target.checked); if (e.target.checked && paymentMethod === "efectivo") setPaymentMethod("tarjeta"); }} />
+          Necesito factura (CFDI)
+        </label>
+        {fiscal
+          ? <small className="fw-muted">Se facturará a {fiscal.razon} ({fiscal.rfc}). FlexiWash emite una sola factura por el total, con IVA. Para facturar, el pago debe hacerse en la app (no en efectivo).</small>
+          : <button type="button" className="fw-linklike" style={{ alignSelf: "flex-start" }} onClick={() => push("billing")}>Agregar datos fiscales</button>}
       </div>
       <div className="fw-summary-bar">
         <div className="fw-summary-rows">
@@ -1088,6 +1136,15 @@ export default function App() {
     return (
       <div className="fw-screen fw-screen--pad-bottom">
         <TopBar title="Estado del servicio" onBack={() => goTab("home")} />
+        {activeOrders.length > 1 && (
+          <div className="fwm-tabs" role="tablist" aria-label="Tus servicios en curso">
+            {activeOrders.map((o) => (
+              <button key={o.id} role="tab" aria-selected={o.id === currentOrder?.id} className={`fwm-tab ${o.id === currentOrder?.id ? "is-on" : ""}`} onClick={() => setFocusId(o.id)}>
+                <strong>{o.employee?.name?.split(" ")[0] || "Prestador"} · #{o.id}</strong><span>{labelOf(o)}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="fw-steps">
           {STEPS.map((s, i) => (
             <div key={s} className={`fw-step ${i <= trackingStep ? "is-done" : ""}`}>
@@ -1100,7 +1157,8 @@ export default function App() {
         <TrackingMap reqId={curReq?.id} onChat={() => setComms({ type: "chat" })} onCall={() => { startCall(currentOrder.id, "client"); setComms({ type: "call" }); }} step={trackingStep} status={curReq?.status || "pending"} providerName={currentOrder?.employee?.name} providerLoc={curReq?.providerLoc} street={currentOrder?.address?.street} />
 
         {curReq?.status === "pending" && <p className="fw-muted" role="status">Esperando a que {curReq.providerName} acepte tu solicitud…</p>}
-        {curReq?.status === "declined" && <div className="fw-card" role="alert"><strong>Solicitud rechazada.</strong> Reembolsamos tu pago al monedero. Puedes solicitar de nuevo con otro prestador.</div>}
+        {currentOrder?.payMethod === "efectivo" && curReq?.status !== "declined" && <p className="fw-muted" role="status">Pagas en efectivo al prestador: {money(currentOrder.total)}.</p>}
+        {curReq?.status === "declined" && <div className="fw-card" role="alert"><strong>Solicitud rechazada.</strong> {currentOrder?.payMethod === "efectivo" ? "No se te cobró nada." : "Reembolsamos tu pago al monedero."} Puedes solicitar de nuevo con otro prestador.</div>}
 
         {currentOrder?.employee && (
           <button className="fw-employee-card" onClick={() => { setSelectedEmployee(currentOrder.employee); push("employeeDetail"); }}>
@@ -1157,10 +1215,31 @@ export default function App() {
         </div>
         <h3 className="fw-section-title">Verificación de seguridad</h3>
         <div className="fw-verify-row">
-          <div><ShieldCheck size={22} /><span>Identidad</span></div>
-          <div><FileCheck2 size={22} /><span>Antecedentes</span></div>
-          <div><HeartHandshake size={22} /><span>Cobertura</span></div>
+          {[["identidad", ShieldCheck, "Identidad"], ["antecedentes", FileCheck2, "Antecedentes"], ["cobertura", HeartHandshake, "Cobertura"]].map(([id, Icon, label]) => (
+            <button key={id} type="button" className="fw-verify-btn" aria-haspopup="dialog" onClick={() => setVerifyInfo(id)}><Icon size={22} /><span>{label}</span></button>
+          ))}
         </div>
+        {verifyInfo && (
+          <div className="fw-modal-veil" role="dialog" aria-label={`Verificación: ${verifyInfo}`} onClick={() => setVerifyInfo(null)}>
+            <div className="fw-modal" style={{ alignItems: "flex-start", textAlign: "left", width: "88%" }} onClick={(ev) => ev.stopPropagation()}>
+              {verifyInfo === "identidad" && (<>
+                <strong>Identidad verificada</strong>
+                <p style={{ margin: 0 }}>FlexiWash validó la identidad de {e.name} antes de activar su cuenta{e.idVerifiedAt ? ` (${new Date(e.idVerifiedAt).toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })})` : ""}. Tus datos y los suyos están protegidos: los documentos nunca se muestran a los clientes.</p>
+                {e.registered && e.idChecks?.length > 0 && <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>{e.idChecks.map((c) => <li key={c.id}>{c.ok ? "✓" : "✗"} {CHECK_LABELS[c.id] || c.id}</li>)}</ul>}
+              </>)}
+              {verifyInfo === "antecedentes" && (<>
+                <strong>Antecedentes</strong>
+                <p style={{ margin: 0 }}>{e.registered ? "Al registrarse, el prestador aceptó que FlexiWash revise sus antecedentes y sus documentos de identidad." : "FlexiWash revisa los antecedentes de sus prestadores antes de activarlos."} Los prestadores pueden perder su acceso si incumplen las normas de conducta del contrato.</p>
+              </>)}
+              {verifyInfo === "cobertura" && (<>
+                <strong>Cobertura FlexiWash</strong>
+                <p style={{ margin: 0 }}>{COVERAGE_TEXT}</p>
+                <button type="button" className="fw-linklike" onClick={() => { setVerifyInfo(null); setSupportOpen(true); }}>Reportar un problema desde Asistencia</button>
+              </>)}
+              <button type="button" className="fw-btn-outline fw-btn-block" onClick={() => setVerifyInfo(null)}>Entendido</button>
+            </div>
+          </div>
+        )}
         <h3 className="fw-section-title">Servicios anteriores</h3>
         <PastServices providerId={e.id} ratings={allRatings} photos={allPhotos} requests={sharedReqs} />
         {fromPicker && (
@@ -1286,6 +1365,9 @@ export default function App() {
         Ver equipo de limpieza disponible <ChevronLeft size={16} className="fw-rot-r" />
       </button>
 
+      <button className="fw-teamlink" onClick={() => push("billing")}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><FileText size={16} /> Facturación</span> <ChevronLeft size={16} className="fw-rot-r" />
+      </button>
       <button className="fw-teamlink" onClick={() => setSupportOpen(true)}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Headphones size={16} /> Asistencia y ayuda</span> <ChevronLeft size={16} className="fw-rot-r" />
       </button>
@@ -1416,6 +1498,8 @@ export default function App() {
     thanks: renderThanks,
     history: renderHistory,
     profile: renderProfile,
+    billing: () => <Billing TopBar={TopBar} onBack={pop} fiscal={fiscal} setFiscal={setFiscal} clientTag={supportThread} invoices={invoices}
+      orders={[...history, ...activeOrders.filter(isDoneOrder)].filter((o, i, a) => a.findIndex((x) => x.id === o.id) === i)} />,
     team: renderTeam,
   };
 
@@ -1712,7 +1796,10 @@ html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
 .fw-profile-actions button{flex:1;}
 .fw-teamlink{background:none;border:none;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--fw-teal-dark);font-weight:700;font-size:13px;padding:10px;cursor:pointer;font-family:inherit;}
 .fw-verify-row{display:flex;justify-content:space-between;gap:8px;}
-.fw-verify-row > div{flex:1;border:1px solid var(--fw-line);border-radius:12px;padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10.5px;text-align:center;color:var(--fw-ink-soft);}
+.fw-verify-row > div,.fw-verify-row > button{flex:1;border:1px solid var(--fw-line);border-radius:12px;padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10.5px;text-align:center;color:var(--fw-ink-soft);}
+.fw-verify-row > button{font:inherit;font-size:10.5px;background:#fff;cursor:pointer;color:var(--fw-ink-soft)}.fw-verify-row > button:hover{border-color:var(--fw-teal);color:var(--fw-teal-dark)}
+.fwm-bar{height:6px;border-radius:99px;background:#e6eeee;overflow:hidden;margin:8px 0}.fwm-bar i{display:block;height:100%;background:var(--fw-teal);transition:width .3s}
+.fwm-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}.fwm-tab{flex:0 0 auto;min-width:140px;text-align:left;border:1px solid var(--fw-line);background:#fff;border-radius:12px;padding:8px 12px;font:inherit;display:flex;flex-direction:column;gap:2px;cursor:pointer}.fwm-tab strong{font-size:12.5px}.fwm-tab span{font-size:11px;color:var(--fw-ink-soft)}.fwm-tab.is-on{border-color:var(--fw-teal);box-shadow:0 0 0 2px var(--fw-teal) inset}
 .fw-team-list{display:flex;flex-direction:column;gap:10px;}
 
 .fw-bottomnav{display:flex;border-top:1px solid var(--fw-line);padding:8px 10px calc(env(safe-area-inset-bottom,0) + 8px);flex-shrink:0;background:var(--fw-surface);}

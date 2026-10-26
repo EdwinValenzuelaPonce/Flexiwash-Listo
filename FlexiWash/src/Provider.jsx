@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react";
-import { useRequests, updateRequest, setProviderLoc, useAllMessages, startCall, setProviderCfg, useRatings, defaultSchedule, usePhotos, uploadPhoto, deletePhoto, MAX_PHOTOS } from "./store.js";
+import { useRequests, updateRequest, setProviderLoc, useAllMessages, startCall, setProviderCfg, useRatings, defaultSchedule, usePhotos, uploadPhoto, deletePhoto, MAX_PHOTOS, useLedger, addLedger } from "./store.js";
+import { COMMISSION, MIN_WITHDRAW, DEBT_LIMIT, BASE_BALANCE, netOf, commissionOf, providerLedger } from "./ledger.js";
 import { compressImage } from "./photos.js";
 import { useGeolocation, distKm } from "./geo.js";
 import { ProviderMap } from "./TrackingMap.jsx";
@@ -12,17 +13,14 @@ import {
   History, MessageCircle, Headphones, Phone, Home as HomeIcon, Car, Sofa, Landmark, Camera, Plus, Trash2
 } from "lucide-react";
 
-const COMMISSION = 0.15;      // comisión FlexiWash sobre el precio del servicio
-const MIN_WITHDRAW = 100;
 const STEPS = ["Aceptado", "En camino", "En proceso", "Finalizado"];
 const ICONS = { Autos: Car, Hogar: HomeIcon, Muebles: Sofa };
 const HOURS = Array.from({ length: 15 }, (_, i) => `${String(i + 7).padStart(2, "0")}:00`);
 const fmt = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
 const money = (n) => fmt.format(n);
-const net = (price) => Math.round(price * (1 - COMMISSION) * 100) / 100;
+const net = netOf;
 
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-const BASE_BALANCE = 4850;
 const JOBS = [
   { id: 288, category: "Autos", service: "Lavado Premium", price: 220, date: "2026-09-27", rating: 5 },
   { id: 281, category: "Hogar", service: "Limpieza básica", price: 350, date: "2026-09-26", rating: 5 },
@@ -36,6 +34,8 @@ const CSS = `
 .fwp-conv .fwp-call{flex:none;width:38px;height:38px;border-radius:50%;border:1px solid var(--fw-line);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .fw-bottomnav .fw-navitem{position:relative}.fw-bottomnav .fw-navitem span:not(.fw-badge){font-size:10px}
 .fwp-chips{display:flex;gap:6px;flex-wrap:wrap}
+.fwp-bar{height:8px;border-radius:99px;background:#e6eeee;overflow:hidden}.fwp-bar i{display:block;height:100%;background:var(--fw-teal)}.fwp-bar i.bad{background:var(--fw-error)}
+.fwp-block{background:#FDECEC;border:1px solid #E7B4B4;color:#8F2D2D;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.45}
 .fwp-chip{border:1px solid var(--fw-line);background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:12px;font-weight:700;color:var(--fw-ink-soft);cursor:pointer}
 .fwp-chip.is-on{background:var(--fw-teal);border-color:var(--fw-teal);color:#fff}
 .fwp-day{display:grid;grid-template-columns:44px 48px 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--fw-line)}
@@ -126,7 +126,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
     lastLoc.current = { id: active.id, t: Date.now(), lat: p.lat, lng: p.lng };
     setProviderLoc(active.id, { lat: p.lat, lng: p.lng, ts: Date.now() });
   }, [sharing, geo.pos?.lat, geo.pos?.lng, active?.id]); // eslint-disable-line
-  const jobs = [...mine.filter((r) => r.status === "done").map((r) => ({ id: r.id, category: r.category, service: r.service, price: r.price, date: r.doneDate, rating: ratingByReq[r.id]?.avg ?? null, comment: ratingByReq[r.id]?.comment })), ...(me === team[0]?.id ? JOBS : [])];
+  const jobs = [...mine.filter((r) => r.status === "done").map((r) => ({ id: r.id, category: r.category, service: r.service, price: r.price, date: r.doneDate, rating: ratingByReq[r.id]?.avg ?? null, comment: ratingByReq[r.id]?.comment, payMethod: r.payMethod })), ...(me === team[0]?.id ? JOBS : [])];
   const [comms, setComms] = useState(null);
   const allMsgs = useAllMessages();
   const incoming = useIncomingCall(mine.map((r) => r.id), "provider");
@@ -149,9 +149,14 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
   }, [lastClient?.id]); // eslint-disable-line
   const chatReqs = mine.filter((r) => r.status === "pending" || r.status === "accepted" || allMsgs.some((m) => m.reqId === r.id));
   const openCall = (reqId) => { startCall(reqId, "provider"); setComms({ type: "call", reqId }); };
-  const [wd, setWd] = usePersistentState("withdrawals", {});
-  const withdrawals = wd[me] || [];
-  const balance = Math.round(((me === team[0]?.id ? BASE_BALANCE : 0) + jobs.filter((j) => !JOBS.includes(j)).reduce((s, j) => s + net(j.price), 0) - withdrawals.reduce((s, w) => s + w.amount, 0)) * 100) / 100;
+  // Saldo del prestador: ganancias por servicios pagados en la app − comisión adeudada por efectivo − retiros (ver ledger.js)
+  const ledgerRows = useLedger();
+  const L = providerLedger({ providerId: me, requests: all, ledger: ledgerRows, base: me === team[0]?.id ? BASE_BALANCE : 0 });
+  const balance = L.balance;
+  const withdrawals = ledgerRows.filter((l) => l.providerId === me && l.kind === "withdrawal").sort((a, b) => b.ts - a.ts);
+  const debtPayments = ledgerRows.filter((l) => l.providerId === me && l.kind === "debt_payment").sort((a, b) => b.ts - a.ts);
+  const [payAmt, setPayAmt] = useState("");
+  const [payVia, setPayVia] = useState("SPEI");
   const [filter, setFilter] = useState("Todos");
   const [profile, setProfile] = useState(() => ({ nombre: meLive?.name || "", telefono: meLive?.phone || "", zona: meLive?.zone || "", clabe: "", services: (meLive?.services || []).map((s) => s[0].toUpperCase() + s.slice(1)) }));
   const [editing, setEditing] = useState(false);
@@ -162,7 +167,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
   const todayEarn = today.reduce((s, j) => s + net(j.price), 0);
   const avg = meLive?.rating ?? 0;
 
-  const accept = (r) => updateRequest(r.id, { status: "accepted", step: 0 });
+  const accept = (r) => { if (L.blocked) return; updateRequest(r.id, { status: "accepted", step: 0 }); }; // con deuda sobre el límite no se aceptan solicitudes nuevas
   const decline = (r) => updateRequest(r.id, { status: "declined" });
   const advance = () => (step < 3 ? updateRequest(active.id, { step: step + 1 }) : updateRequest(active.id, { status: "done", step: 3, doneDate: todayIso() }));
   const setDay = (i, patch) => setProviderCfg(me, { schedule: schedule.map((x, k) => (k === i ? { ...x, ...patch } : x)) });
@@ -173,8 +178,16 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
     if (!Number.isFinite(n) || n < MIN_WITHDRAW) return setMsg({ err: `El retiro mínimo es ${money(MIN_WITHDRAW)}.` });
     if (n > balance) return setMsg({ err: "El monto supera tu saldo disponible." });
     if (!/^\d{18}$/.test(profile.clabe)) return setMsg({ err: "Captura una CLABE de 18 dígitos en tu perfil." });
-    setWd((m) => ({ ...m, [me]: [{ id: Date.now(), amount: n, clabe: profile.clabe.slice(-4), status: "En proceso" }, ...(m[me] || [])] }));
+    addLedger({ providerId: me, kind: "withdrawal", amount: n, clabe: profile.clabe.slice(-4), status: "En proceso" });
     setAmount(""); setMsg({ ok: "Solicitud enviada. Se depositará en 1 a 2 días hábiles." });
+  };
+  // DEMO: el pago se registra al instante. En producción se confirma con la pasarela de pago o la conciliación bancaria.
+  const payDebt = () => {
+    const n = Math.round(parseFloat(payAmt || L.debt) * 100) / 100;
+    if (!Number.isFinite(n) || n <= 0) return setMsg({ err: "Indica el monto a pagar." });
+    if (n > L.debt) return setMsg({ err: `Tu comisión pendiente es ${money(L.debt)}.` });
+    addLedger({ providerId: me, kind: "debt_payment", amount: n, method: payVia, status: "Pagado" });
+    setPayAmt(""); setMsg({ ok: n >= L.debt ? "Pagaste tu comisión pendiente. Ya puedes recibir solicitudes." : "Pago registrado." });
   };
 
   const Head = ({ title }) => (
@@ -194,6 +207,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
         <div><strong>{available ? "Disponible" : "No disponible"}</strong><span>{available ? "Puedes recibir nuevas solicitudes" : "No recibirás solicitudes nuevas"}</span></div>
         <Switch on={available} onClick={() => setProviderCfg(me, { available: !available })} label="Disponibilidad" />
       </div>
+      {L.blocked && <div className="fwp-block" role="alert"><strong>Solicitudes bloqueadas.</strong> Debes {money(L.debt)} de comisión por servicios en efectivo (límite {money(DEBT_LIMIT)}). Págala en Ganancias para volver a recibir solicitudes.</div>}
       <div className="fw-provider-stats">
         <div><strong>{money(todayEarn)}</strong><span>Ganancias hoy</span></div>
         <div><strong>{today.length}</strong><span>Servicios hoy</span></div>
@@ -212,6 +226,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
               <button className="fw-btn-outline" onClick={() => openChat(active.id)}><MessageCircle size={16} /> Mensaje</button>
               <button className="fw-btn-outline" onClick={() => openCall(active.id)}><Phone size={16} /> Llamar</button>
             </div>
+            {active.payMethod === "efectivo" && <p className="fw-muted" style={{ margin: 0, fontSize: 12 }}>Cobra {money(active.total ?? active.price)} en efectivo al cliente. Debes {money(commissionOf(active.price))} de comisión a FlexiWash.</p>}
             <button className="fw-btn-primary fw-btn-block" onClick={advance}>{step < 3 ? `Cambiar a: ${STEPS[step + 1]}` : "Cerrar servicio"}</button>
           </div>
         </section>
@@ -223,7 +238,8 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
               <div className="fw-provider-request" key={r.id}>
                 <div className="fw-provider-request-head"><div className="fw-provider-request-icon">{React.createElement(ICONS[r.category], { size: 22 })}</div><div><small>{r.category}</small><strong>{r.service}</strong><span>{r.detail}</span></div><b>{money(net(r.price))}</b></div>
                 <div className="fw-provider-meta"><span><MapPin size={14} /> {r.zone}</span><span>{r.when} · ganas el {100 - COMMISSION * 100}%</span></div>
-                <div className="fw-provider-actions"><button className="fw-btn-outline" onClick={() => decline(r)}>Omitir</button><button className="fw-btn-primary" onClick={() => accept(r)}>Aceptar</button></div>
+                <p className="fw-muted" style={{ margin: 0, fontSize: 12 }}>{r.payMethod === "efectivo" ? `Pago en efectivo: tú cobras y debes ${money(commissionOf(r.price))} de comisión a FlexiWash.` : "Pago en la app: FlexiWash te deposita tu parte."}</p>
+                <div className="fw-provider-actions"><button className="fw-btn-outline" onClick={() => decline(r)}>Omitir</button><button className="fw-btn-primary" disabled={L.blocked} onClick={() => accept(r)}>Aceptar</button></div>
               </div>))}</div>}
         </section>
       )}
@@ -269,6 +285,22 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
     <>
       <Head title="Ganancias y retiros" />
       <div className="fw-wallet-card"><span>Saldo disponible</span><strong>{money(balance)}</strong><p>{jobs.length} servicios completados · comisión {COMMISSION * 100}%</p></div>
+      <section className="fw-section"><h3>Comisión por servicios en efectivo</h3>
+        <div className="fw-card fwp-col">
+          <div className="fw-order-line"><span>Comisión pendiente</span><strong style={{ color: L.debt > 0 ? "var(--fw-error)" : undefined }}>{money(L.debt)}</strong></div>
+          <div className="fwp-bar" aria-hidden="true"><i className={L.blocked ? "bad" : ""} style={{ width: `${Math.min(100, (L.debt / DEBT_LIMIT) * 100)}%` }} /></div>
+          <small className="fw-muted">Límite {money(DEBT_LIMIT)}. Arriba de ese monto no recibes solicitudes nuevas hasta pagar. Lo que debes se descuenta primero de tus ganancias por servicios pagados en la app.</small>
+          {L.offset > 0 && <small className="fw-muted">Ya se descontaron {money(L.offset)} de tus ganancias.</small>}
+          {L.blocked && <div className="fwp-block" role="alert">Cuenta bloqueada para nuevas solicitudes hasta que pagues.</div>}
+          {L.debt > 0 && (
+            <>
+              <input className="fw-input" inputMode="decimal" placeholder={`Monto a pagar (hasta ${money(L.debt)})`} value={payAmt} onChange={(e) => { setPayAmt(e.target.value.replace(/[^\d.]/g, "")); setMsg(null); }} />
+              <div className="fwp-chips">{["SPEI", "Tarjeta", "OXXO"].map((v) => <button key={v} className={`fwp-chip ${payVia === v ? "is-on" : ""}`} onClick={() => setPayVia(v)}>{v}</button>)}</div>
+              <button className="fw-btn-primary fw-btn-block" onClick={payDebt}>Pagar comisión</button>
+            </>
+          )}
+        </div>
+      </section>
       <section className="fw-section"><h3>Retirar a cuenta bancaria</h3>
         <div className="fwp-col">
           <input className="fw-input" inputMode="decimal" placeholder={`Monto (mín. ${money(MIN_WITHDRAW)})`} value={amount} onChange={(e) => { setAmount(e.target.value.replace(/[^\d.]/g, "")); setMsg(null); }} />
@@ -281,7 +313,10 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
       <section className="fw-section"><h3>Movimientos</h3>
         <div className="fw-card">
           {withdrawals.map((w) => <div className="fw-order-line" key={w.id}><span>Retiro · CLABE ···{w.clabe} ({w.status})</span><strong>-{money(w.amount)}</strong></div>)}
-          {jobs.slice(0, 5).map((j) => <div className="fw-order-line" key={j.id}><span>{j.service}</span><strong>+{money(net(j.price))}</strong></div>)}
+          {debtPayments.map((w) => <div className="fw-order-line" key={w.id}><span>Pago de comisión · {w.method}</span><strong>-{money(w.amount)}</strong></div>)}
+          {jobs.slice(0, 5).map((j) => j.payMethod === "efectivo"
+            ? <div className="fw-order-line" key={j.id}><span>{j.service} · efectivo</span><strong style={{ color: "var(--fw-error)" }}>comisión -{money(commissionOf(j.price))}</strong></div>
+            : <div className="fw-order-line" key={j.id}><span>{j.service}</span><strong>+{money(net(j.price))}</strong></div>)}
         </div>
       </section>
     </>
