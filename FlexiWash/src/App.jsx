@@ -390,6 +390,7 @@ export default function App() {
   const [orderNote, setOrderNote] = useState("");
   const [comms, setComms] = useState(null);
   const [supportOpen, setSupportOpen] = useState(false);
+  const [supportFocus, setSupportFocus] = useState(null); // servicio desde el que se abrió «Ayuda con este servicio»
   const [verifyInfo, setVerifyInfo] = useState(null);
   // Identificador del hilo de asistencia de este dispositivo (cliente)
   const supportThread = useMemo(() => { try { let v = window.localStorage.getItem("fw:deviceId"); if (!v) { v = Math.random().toString(36).slice(2, 10); window.localStorage.setItem("fw:deviceId", v); } return `client-${v}`; } catch { return "client-anon"; } }, []);
@@ -1195,6 +1196,11 @@ export default function App() {
             Calificar servicio
           </button>
         )}
+        {currentOrder && (
+          <button className="fw-btn-outline fw-btn-block" onClick={() => { setSupportFocus({ reqId: currentOrder.id, service: curReq?.service, when: curReq?.when, providerName: currentOrder.employee?.name }); setSupportOpen(true); }}>
+            <Headphones size={16} style={{ verticalAlign: "-3px" }} /> Ayuda con este servicio
+          </button>
+        )}
       </div>
     );
   };
@@ -1516,7 +1522,7 @@ export default function App() {
         <div className="fw-content">{(screens[screen] || renderHome)()}</div>
         {showNotifs && renderNotifSheet()}
         {chatReqId != null && <ChatView reqId={chatReqId} me="client" title={chatName} subtitle="Tu prestador" onClose={() => setComms(null)} />}
-        {supportOpen && <SupportChat role="client" threadId={supportThread} name={profile.nombre} orders={[...sharedReqs].sort((a, b) => (b.createdAt || b.id || 0) - (a.createdAt || a.id || 0)).slice(0, 5).map((r) => ({ reqId: r.id, service: r.service, when: r.when, providerName: r.providerName }))} onClose={() => setSupportOpen(false)} />}
+        {supportOpen && <SupportChat role="client" threadId={supportThread} name={profile.nombre} focus={supportFocus} orders={[...sharedReqs].sort((a, b) => (b.createdAt || b.id || 0) - (a.createdAt || a.id || 0)).slice(0, 5).map((r) => ({ reqId: r.id, service: r.service, when: r.when, providerName: r.providerName }))} onClose={() => { setSupportOpen(false); setSupportFocus(null); }} />}
         {comms?.type === "call" && currentOrder && <CallView reqId={currentOrder.id} me="client" name={currentOrder.employee?.name} onClose={() => setComms(null)} />}
         {showBottomNav && <BottomNav active={activeTab} onChange={goTab} />}
       </div>

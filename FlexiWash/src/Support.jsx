@@ -9,23 +9,37 @@ import { sendMessage, sendSupport, useSupport } from "./store.js";
 // (store.js); un panel de administrador (pendiente) leería los hilos con escalated:true y respondería con from:"agent".
 const FAQ = {
   client: [
-    ["Pagos", /pago|pagar|tarjeta|efectivo|paypal|monedero|cobr/i, "Puedes pagar en efectivo, con tarjeta, PayPal o con tu Monedero FlexiWash (3% de recompensa en servicios elegibles). Si ves un cobro que no reconoces, escribe «agente»."],
-    ["Mi servicio", /servicio|estado|seguimiento|camino|llega|tard|prestador/i, "Mira el avance en Inicio → «Tu servicio» → Ver seguimiento. Desde ahí también puedes escribirle o llamar a tu prestador."],
-    ["Calificar", /calific|estrella|comentario|insignia|reseña/i, "Al finalizar el servicio aparece «Calificar servicio». Tus respuestas y comentario se muestran en el perfil del prestador y le generan insignias."],
+    ["Objeto perdido", /perd[ií]|objeto|olvid/i, "Para un objeto perdido hay que contactar a tu prestador: entra a Inicio → «Tu servicio» → Ver seguimiento y escríbele por el chat. Si no responde, pulsa «Hablar con un agente»."],
+    ["No llegó", /no ha llegado|no lleg|atras|tard/i, "Revisa el avance en Inicio → «Tu servicio» → Ver seguimiento; desde ahí puedes escribirle o llamar a tu prestador. Si no responde, pulsa «Hablar con un agente»."],
+    ["Cancelar o reprogramar", /cancel|reprogram/i, "Para cancelar o reprogramar, acuérdalo con tu prestador por el chat del seguimiento. Si no hay respuesta, pulsa «Hablar con un agente»."],
     ["Reportar un problema", /problema|queja|dañ|reclam|robo|mal|reporte/i, "Lamentamos eso. Cuéntanos qué pasó y pulsa «Hablar con un agente» para que revise tu caso."],
+    ["Calificar", /calific|estrella|comentario|insignia|reseña/i, "Al finalizar el servicio aparece «Calificar servicio». Tus respuestas y comentario se muestran en el perfil del prestador y le generan insignias."],
+    ["Pagos", /pago|pagar|tarjeta|efectivo|paypal|monedero|cobr/i, "Puedes pagar en efectivo, con tarjeta, PayPal o con tu Monedero FlexiWash (3% de recompensa en servicios elegibles). Si ves un cobro que no reconoces, escribe «agente»."],
+    ["Mi servicio", /servicio|estado|seguimiento|camino|llega|prestador/i, "Mira el avance en Inicio → «Tu servicio» → Ver seguimiento. Desde ahí también puedes escribirle o llamar a tu prestador."],
   ],
   provider: [
+    ["Calificación injusta", /injust/i, "Las calificaciones no se borran automáticamente. Pulsa «Hablar con un agente» y cuéntanos qué pasó para que revisen tu caso."],
+    ["Problema con un cliente", /problema|reportar|cliente/i, "Cuéntanos qué pasó y pulsa «Hablar con un agente» para que revise tu caso."],
     ["Retiros", /retir|clabe|depósit|deposit|saldo|ganancia/i, "Puedes retirar desde la pestaña de ganancias a tu CLABE cuando llegues al mínimo de retiro. Revisa que tu CLABE tenga 18 dígitos."],
-    ["Comisión y efectivo", /comisi|efectivo|adeudo|remit/i, "FlexiWash retiene 15% por servicio. En pagos en efectivo debes cubrir la comisión dentro del plazo de tu contrato; si hay adeudo se puede compensar con tus saldos."],
+    ["Comisión y efectivo", /comisi|efectivo|adeudo|remit/i, "FlexiWash retiene 15% por servicio. En pagos en efectivo, si hay adeudo se descuenta de tu saldo; si no alcanza, puedes recargar saldo en Ganancias → Recargar saldo."],
     ["Verificación", /verific|identidad|ine|curp|contrato|baja|suspend/i, "Tu identidad se valida con CURP, INE y selfie. Si tu cuenta fue rechazada o suspendida, pulsa «Hablar con un agente» para revisarla."],
     ["Insignias", /insignia|calific|estrella|reseña|top/i, "Las insignias se otorgan solas según tus calificaciones: puntualidad, amabilidad, calidad y número de servicios."],
   ],
 };
+// Temas rápidos: [etiqueta del botón, mensaje que se envía al asistente]
+const TOPICS = {
+  client: [["Objeto perdido", "Perdí un objeto durante mi servicio"], ["Cobro", "Tengo una duda sobre un cobro"], ["No llegó", "Mi prestador no ha llegado o se está atrasando"], ["Daño o problema", "Hubo un daño o un problema con mi servicio"], ["Calificación", "¿Cómo califico mi servicio?"], ["Cancelar o reprogramar", "Quiero cancelar o reprogramar mi servicio"]],
+  provider: [["Mi saldo y comisión", "¿Cuánto debo de comisión y cómo la pago?"], ["Retiros", "¿Cómo retiro mi dinero?"], ["Verificación", "Tengo una duda sobre mi verificación"], ["Problema con un cliente", "Quiero reportar un problema con un cliente"], ["Calificación injusta", "Creo que una calificación que recibí es injusta"]],
+};
+const ACTION_LABEL = { topup: "Ir a Recargar saldo", withdraw: "Ir a Retirar" };
 const HUMAN = /agente|humano|persona|asesor|operador/i;
-const CSS = `.fws{position:absolute;inset:0;z-index:85;display:flex;flex-direction:column;background:var(--fw-surface,#fff)}.fws-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--fw-line,#dfe8e6)}.fws-head strong{font-size:15px}.fws-head span{display:block;font-size:12px;color:var(--fw-ink-soft,#5b7570)}.fws-x{width:36px;height:36px;border-radius:50%;border:1px solid var(--fw-line,#dfe8e6);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}.fws-list{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--fw-bg,#eff7f5)}.fws-b{max-width:82%;padding:9px 12px;border-radius:14px;font-size:13px;line-height:1.4;background:#fff;align-self:flex-start;border:1px solid var(--fw-line,#dfe8e6)}.fws-b.me{align-self:flex-end;background:var(--fw-teal,#0e9c8e);color:#fff;border-color:transparent}.fws-b.agent{border-color:var(--fw-teal,#0e9c8e)}.fws-b small{display:block;opacity:.6;font-size:10px;margin-top:2px}.fws-quick{display:flex;gap:6px;flex-wrap:wrap;padding:8px 14px 0}.fws-quick button{border:1px solid var(--fw-line,#dfe8e6);background:#fff;border-radius:999px;padding:6px 11px;font:inherit;font-size:12px;cursor:pointer}.fws-quick .human{background:var(--fw-teal,#0e9c8e);color:#fff;border-color:transparent}.fws-form{display:flex;gap:8px;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 12px)}.fws-form input{flex:1;font:inherit;font-size:14px;padding:11px 14px;border:1px solid var(--fw-line,#dfe8e6);border-radius:999px;outline:none}.fws-send{width:42px;height:42px;border-radius:50%;border:none;background:var(--fw-teal,#0e9c8e);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}.fws-send:disabled{opacity:.4}`;
+const CSS = `.fws{position:absolute;inset:0;z-index:85;display:flex;flex-direction:column;background:var(--fw-surface,#fff)}.fws-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--fw-line,#dfe8e6)}.fws-head strong{font-size:15px}.fws-head span{display:block;font-size:12px;color:var(--fw-ink-soft,#5b7570)}.fws-x{width:36px;height:36px;border-radius:50%;border:1px solid var(--fw-line,#dfe8e6);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}.fws-list{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--fw-bg,#eff7f5)}.fws-b{max-width:82%;padding:9px 12px;border-radius:14px;font-size:13px;line-height:1.4;background:#fff;align-self:flex-start;border:1px solid var(--fw-line,#dfe8e6)}.fws-b.me{align-self:flex-end;background:var(--fw-teal,#0e9c8e);color:#fff;border-color:transparent}.fws-b.agent{border-color:var(--fw-teal,#0e9c8e)}.fws-b small{display:block;opacity:.6;font-size:10px;margin-top:2px}.fws-act{display:block;margin-top:8px;padding:7px 12px;border-radius:10px;border:1px solid var(--fw-teal,#0e9c8e);background:#fff;color:var(--fw-teal,#0e9c8e);font-weight:700;font-size:12px;cursor:pointer}.fws-quick{display:flex;gap:6px;flex-wrap:wrap;padding:8px 14px 0}.fws-quick button{border:1px solid var(--fw-line,#dfe8e6);background:#fff;border-radius:999px;padding:6px 11px;font:inherit;font-size:12px;cursor:pointer}.fws-quick .human{background:var(--fw-teal,#0e9c8e);color:#fff;border-color:transparent}.fws-form{display:flex;gap:8px;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 12px)}.fws-form input{flex:1;font:inherit;font-size:14px;padding:11px 14px;border:1px solid var(--fw-line,#dfe8e6);border-radius:999px;outline:none}.fws-send{width:42px;height:42px;border-radius:50%;border:none;background:var(--fw-teal,#0e9c8e);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}.fws-send:disabled{opacity:.4}`;
 
 // threadId identifica la conversación (p. ej. "client-<dispositivo>" o "provider-<id>").
-export default function SupportChat({ role = "client", threadId, name = "", orders = [], onClose }) {
+// focus (cliente): servicio desde el que se abrió la ayuda { reqId, service, when, providerName }.
+// account (prestador): { balance, debt, debtLimit, blocked, minWithdraw, minTopup, commissionPct } para que el asistente responda con cifras reales.
+// onAction(action): el asistente sugiere ir a una pantalla ("topup" | "withdraw"); la app decide cómo navegar.
+export default function SupportChat({ role = "client", threadId, name = "", orders = [], focus = null, account = null, onAction, onClose }) {
   const all = useSupport();
   const list = all.filter((m) => m.threadId === threadId);
   const escalated = list.some((m) => m.escalated);
@@ -33,6 +47,7 @@ export default function SupportChat({ role = "client", threadId, name = "", orde
   const [busy, setBusy] = useState(false);
   const end = useRef(null);
   const faq = FAQ[role] || FAQ.client;
+  const topics = TOPICS[role] || TOPICS.client;
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [list.length, busy]);
 
   const say = (from, t, extra) => sendSupport({ threadId, role, name, from, text: t, ...extra });
@@ -42,13 +57,13 @@ export default function SupportChat({ role = "client", threadId, name = "", orde
     const history = [...list, { from: "user", text: v }].slice(-12).map((m) => ({ from: m.from, text: m.text }));
     setBusy(true);
     try {
-      const r = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role, name, history, orders }) });
+      const r = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role, name, history, orders, focus, account }) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { reply: t, escalate: esc, notify } = await r.json();
+      const { reply: t, escalate: esc, notify, action } = await r.json();
       if (!t) throw new Error("vacío");
       // Aviso al prestador: llega a su pestaña «Mensajes» (con contador y alerta) y puede responder por chat o llamar al cliente.
       if (notify && orders.some((o) => o.reqId === notify.reqId)) sendMessage(notify.reqId, "client", `${name ? `${name.split(" ")[0]} reporta` : "El cliente reporta"}: ${notify.summary} Por favor contáctalo por este chat o por llamada.`, { via: "assistant" });
-      say("bot", t, esc ? { escalated: true } : undefined);
+      say("bot", t, { ...(esc ? { escalated: true } : {}), ...(action && ACTION_LABEL[action] ? { action } : {}) });
     } catch {
       const hit = faq.find(([, re]) => re.test(v));
       say("bot", hit ? hit[2] : "No estoy seguro de haberte entendido. Elige un tema de abajo o pulsa «Hablar con un agente».");
@@ -66,13 +81,13 @@ export default function SupportChat({ role = "client", threadId, name = "", orde
       <style>{CSS}</style>
       <div className="fws-head"><div><strong>Asistencia FlexiWash</strong><span>{escalated ? "Un agente revisará tu caso · el asistente sigue disponible" : "Asistente con IA · disponible 24/7"}</span></div><button className="fws-x" aria-label="Cerrar asistencia" onClick={onClose}><X size={18} /></button></div>
       <div className="fws-list" aria-live="polite">
-        <div className="fws-b">Hola{name ? `, ${name.split(" ")[0]}` : ""}. Soy el asistente de FlexiWash. ¿En qué te ayudo?</div>
-        {list.map((m) => <div key={m.id} className={`fws-b ${m.from === "user" ? "me" : m.from === "agent" ? "agent" : ""}`}>{m.from === "agent" && <strong style={{ fontSize: 11 }}>Agente FlexiWash<br /></strong>}{m.text}<small>{new Date(m.ts).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></div>)}
+        <div className="fws-b">Hola{name ? `, ${name.split(" ")[0]}` : ""}. Soy el asistente de FlexiWash. {focus?.service ? `Veo que pides ayuda con tu servicio de ${focus.service}${focus.providerName ? ` con ${focus.providerName}` : ""}. ¿Qué pasó?` : "¿En qué te ayudo?"}</div>
+        {list.map((m) => <div key={m.id} className={`fws-b ${m.from === "user" ? "me" : m.from === "agent" ? "agent" : ""}`}>{m.from === "agent" && <strong style={{ fontSize: 11 }}>Agente FlexiWash<br /></strong>}{m.text}{m.action && onAction && ACTION_LABEL[m.action] && <button type="button" className="fws-act" onClick={() => onAction(m.action)}>{ACTION_LABEL[m.action]} ›</button>}<small>{new Date(m.ts).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></div>)}
         {busy && <div className="fws-b" aria-label="Escribiendo">Escribiendo…</div>}
         <div ref={end} />
       </div>
       <div className="fws-quick">
-        {faq.map(([label]) => <button key={label} disabled={busy} onClick={() => send(label)}>{label}</button>)}
+        {topics.map(([label, msg]) => <button key={label} disabled={busy} onClick={() => send(msg)}>{label}</button>)}
         {!escalated && <button className="human" onClick={() => { say("user", "Quiero hablar con un agente"); escalate(); }}><Headphones size={12} style={{ verticalAlign: "-2px" }} /> Hablar con un agente</button>}
       </div>
       <form className="fws-form" onSubmit={(e) => { e.preventDefault(); send(); }}>

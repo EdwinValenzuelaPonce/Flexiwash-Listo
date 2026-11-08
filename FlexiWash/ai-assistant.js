@@ -35,6 +35,11 @@ const TOOLS = {
     description: "Pasa el caso a un agente humano de FlexiWash. Úsala solo para asuntos graves que no puedas resolver.",
     input_schema: { type: "object", properties: { reason: { type: "string", description: "Motivo breve" } }, required: ["reason"] },
   },
+  suggest_action: {
+    name: "suggest_action",
+    description: "Muestra al prestador un botón para ir directo a una pantalla de la app. Úsala cuando la solución sea recargar saldo (topup) o retirar dinero (withdraw).",
+    input_schema: { type: "object", properties: { action: { type: "string", enum: ["topup", "withdraw"] } }, required: ["action"] },
+  },
   notify_provider: {
     name: "notify_provider",
     description: "Notifica al prestador de un servicio del cliente para que lo contacte directamente (objeto perdido u otro asunto que solo el prestador pueda aclarar).",
@@ -65,26 +70,49 @@ function toMessages(history) {
 
 // orders: [{ reqId, service, when, providerName }] — servicios recientes del cliente (máx. 5).
 function cleanOrders(orders) {
-  return (Array.isArray(orders) ? orders : []).slice(0, 5)
+  const seen = new Set();
+  return (Array.isArray(orders) ? orders : []).filter((o) => { const k = Number(o?.reqId); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 5)
     .map((o) => ({ reqId: Number(o?.reqId), service: String(o?.service || "").slice(0, 80), when: String(o?.when || "").slice(0, 30), providerName: String(o?.providerName || "").slice(0, 40) }))
     .filter((o) => Number.isFinite(o.reqId));
 }
 
-export async function askAssistant({ role, name, history, orders }) {
+// account (prestador): cifras de su cuenta enviadas por la app. Solo se aceptan números y un booleano.
+// DEMO: vienen del navegador; en producción el servidor debe leerlas de la base de datos.
+function cleanAccount(a) {
+  if (!a || typeof a !== "object") return null;
+  const n = (v, max = 1e7) => (Number.isFinite(Number(v)) ? Math.min(Math.max(Math.round(Number(v) * 100) / 100, 0), max) : null);
+  const balance = n(a.balance), debt = n(a.debt), debtLimit = n(a.debtLimit), minWithdraw = n(a.minWithdraw), minTopup = n(a.minTopup), commissionPct = n(a.commissionPct, 100);
+  if (balance === null || debt === null || debtLimit === null) return null;
+  return { balance, debt, debtLimit, blocked: debt > debtLimit, toUnblock: Math.max(0, Math.round((debt - debtLimit) * 100) / 100), minWithdraw, minTopup, commissionPct };
+}
+
+const PROVIDER_RULES = `Reglas para prestadores:
+- Usa las cifras exactas de su cuenta (abajo) cuando pregunte por saldo, comisión, bloqueo o retiros; no inventes montos.
+- La comisión pendiente por servicios en efectivo se descuenta sola de su saldo (ganancias por servicios pagados en la app y recargas). Si no alcanza, queda como deuda; si la deuda supera el límite, no recibe solicitudes nuevas.
+- Para pagar o salir del bloqueo puede recargar saldo en Ganancias → Recargar saldo (por tarjeta, SPEI u OXXO): la recarga se acredita y la deuda se cobra sola. Cuando esa sea la solución, llama a suggest_action con "topup"; si quiere retirar, con "withdraw".
+- Si reporta un problema con un cliente (no se presentó, dirección falsa, mal trato) o una calificación que considera injusta: pide en una pregunta qué pasó y en qué servicio, y luego usa escalate_to_agent. No prometas sanciones, borrar calificaciones ni resultados.`;
+
+export async function askAssistant({ role, name, history, orders, focus, account }) {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) throw Object.assign(new Error("Falta ANTHROPIC_API_KEY"), { code: 503 });
   const messages = toMessages(history);
   if (!messages.length || messages[messages.length - 1].role !== "user") throw Object.assign(new Error("Mensaje vacío"), { code: 400 });
   const isClient = role !== "provider";
-  const list = isClient ? cleanOrders(orders) : [];
+  const list = isClient ? cleanOrders([...(focus && typeof focus === "object" ? [focus] : []), ...(Array.isArray(orders) ? orders : [])]) : [];
+  const focusId = isClient && focus ? Number(focus.reqId) : NaN;
+  const focusOrder = list.find((o) => o.reqId === focusId) || null;
+  const acct = isClient ? null : cleanAccount(account);
   const who = String(name || "").split(" ")[0].slice(0, 30);
   const system = [
     BASE, ROLE[isClient ? "client" : "provider"],
     isClient && list.length ? `${LOST}\nServicios recientes del cliente:\n${list.map((o) => `- #${o.reqId}: ${o.service || "servicio"}${o.when ? ` (${o.when})` : ""}${o.providerName ? ` con ${o.providerName}` : ""}`).join("\n")}` : "",
+    focusOrder ? `El cliente abrió la ayuda desde el servicio #${focusOrder.reqId} (${focusOrder.service || "servicio"}${focusOrder.providerName ? ` con ${focusOrder.providerName}` : ""}). Asume que habla de ese servicio y no preguntes cuál, salvo que mencione otro.` : "",
+    !isClient ? PROVIDER_RULES : "",
+    acct ? `Cuenta del prestador (MXN): saldo disponible $${acct.balance}; comisión pendiente (deuda) $${acct.debt}; límite de deuda $${acct.debtLimit}; ${acct.blocked ? `BLOQUEADO para solicitudes nuevas (debe recargar al menos $${acct.toUnblock} para desbloquearse, o $${acct.debt} para liquidar todo)` : "no está bloqueado"}; comisión FlexiWash ${acct.commissionPct ?? 15}%; mínimo de retiro $${acct.minWithdraw ?? 100}; recarga mínima $${acct.minTopup ?? 100}.` : "",
     isClient && !list.length ? "El cliente no tiene servicios registrados en este dispositivo: si pregunta por un objeto perdido, explícale que necesita haber contratado un servicio para poder contactar al prestador." : "",
     who ? `La persona se llama ${who}.` : "",
   ].filter(Boolean).join("\n");
-  const tools = [TOOLS.escalate_to_agent, ...(isClient && list.length ? [TOOLS.notify_provider] : [])];
+  const tools = [TOOLS.escalate_to_agent, ...(isClient && list.length ? [TOOLS.notify_provider] : []), ...(!isClient ? [TOOLS.suggest_action] : [])];
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
@@ -95,9 +123,10 @@ export async function askAssistant({ role, name, history, orders }) {
   const data = await r.json();
   const blocks = data.content || [];
   let reply = blocks.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-  let escalate = false, notify = null;
+  let escalate = false, notify = null, action = null;
   for (const b of blocks.filter((x) => x.type === "tool_use")) {
     if (b.name === "escalate_to_agent") escalate = true;
+    if (b.name === "suggest_action" && !isClient && ["topup", "withdraw"].includes(b.input?.action)) action = b.input.action;
     if (b.name === "notify_provider" && !notify) {
       const o = list.find((x) => x.reqId === Number(b.input?.reqId)); // solo servicios de este cliente
       const summary = String(b.input?.summary || "").trim().slice(0, 250);
@@ -105,8 +134,9 @@ export async function askAssistant({ role, name, history, orders }) {
     }
   }
   if (!reply && notify) reply = `Listo, avisé a ${notify.providerName || "tu prestador"} sobre tu caso. Te contactará directamente por el chat del servicio o por llamada, y te llegará una notificación en la app. Mientras tanto, sigo aquí para lo que necesites.`;
+  if (!reply && action) reply = action === "topup" ? "Puedes recargar saldo en Ganancias → Recargar saldo; ahí mismo se descuenta tu comisión pendiente." : "Puedes retirar tu saldo desde Ganancias, cuando llegues al mínimo de retiro.";
   if (!reply && escalate) reply = "Listo, avisé a un agente para que revise tu caso. Te responderá en este mismo chat; mientras tanto, cuéntame todos los detalles que puedas.";
   reply = reply.slice(0, 500);
   if (!reply) throw Object.assign(new Error("Respuesta vacía"), { code: 502 });
-  return { reply, escalate, notify };
+  return { reply, escalate, notify, action };
 }

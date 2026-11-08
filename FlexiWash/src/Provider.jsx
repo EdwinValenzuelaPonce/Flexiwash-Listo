@@ -299,7 +299,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
     <>
       <Head title="Ganancias y retiros" />
       <div className="fw-wallet-card"><span>Saldo disponible</span><strong>{money(balance)}</strong><p>{jobs.length} servicios completados · comisión {COMMISSION * 100}%</p></div>
-      <section className="fw-section"><h3>Recargar saldo</h3>
+      <section className="fw-section" id="fwp-topup"><h3>Recargar saldo</h3>
         <div className="fw-card fwp-col">
           <small className="fw-muted">Mete dinero a tu saldo y tu comisión pendiente se cobra sola. Lo que sobre queda disponible.</small>
           <input className="fw-input" inputMode="decimal" aria-label="Monto a recargar" placeholder={`Monto (mín. ${money(MIN_TOPUP)})`} value={topAmt} onChange={(e) => { setTopAmt(e.target.value.replace(/[^\d.]/g, "").replace(/^(\d*\.?\d{0,2}).*$/, "$1")); setTopMsg(null); }} />
@@ -308,6 +308,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
           <div className="fwp-chips">{["SPEI", "Tarjeta"].map((v) => <button key={v} type="button" className="fwp-chip" onClick={() => topUp(v)}>Recargar con {v}</button>)}</div>
           {topMsg?.err && <p className="fwp-err" role="alert">{topMsg.err}</p>}
           {topMsg?.ok && <p className="fwp-ok" role="status">{topMsg.ok}</p>}
+          <button type="button" className="fw-btn-outline fw-btn-block" onClick={() => setSupportOpen(true)}><Headphones size={16} style={{ verticalAlign: "-3px" }} /> ¿Dudas sobre tu comisión? Pregunta al asistente</button>
         </div>
       </section>
       <section className="fw-section"><h3>Comisión por servicios en efectivo</h3>
@@ -401,7 +402,10 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
         <button key={id} className={`fw-navitem ${tab === id ? "is-active" : ""}`} onClick={() => setTab(id)}><Icon size={20} strokeWidth={tab === id ? 2.4 : 1.8} />{id === "messages" && unreadTotal > 0 && <span className="fw-badge" style={{ top: 0, right: "50%", marginRight: -22 }}>{unreadTotal}</span>}<span>{label}</span></button>))}
       </div>
       {comms?.type === "chat" && <ChatView reqId={comms.reqId} me="provider" title={`Cliente #${comms.reqId}`} subtitle={mine.find((r) => r.id === comms.reqId)?.zone} onClose={() => setComms(null)} />}
-      {supportOpen && <SupportChat role="provider" threadId={`provider-${me}`} name={meLive?.name || ""} onClose={() => setSupportOpen(false)} />}
+      {supportOpen && <SupportChat role="provider" threadId={`provider-${me}`} name={meLive?.name || ""}
+        account={{ balance: L.balance, debt: L.debt, debtLimit: DEBT_LIMIT, blocked: L.blocked, minWithdraw: MIN_WITHDRAW, minTopup: MIN_TOPUP, commissionPct: Math.round(COMMISSION * 100) }}
+        onAction={(a) => { setSupportOpen(false); setTab("earnings"); if (a === "topup") setTimeout(() => document.getElementById("fwp-topup")?.scrollIntoView({ behavior: "smooth", block: "start" }), 120); }}
+        onClose={() => setSupportOpen(false)} />}
       {comms?.type === "call" && <CallView reqId={comms.reqId} me="provider" name={`Cliente #${comms.reqId}`} onClose={() => setComms(null)} />}
     </div>
   );
