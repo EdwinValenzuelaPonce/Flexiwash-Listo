@@ -1,11 +1,13 @@
 // Lógica del asistente de IA de FlexiWash (compartida por server.js y api/assistant.js).
 // La llave ANTHROPIC_API_KEY vive solo en el servidor: nunca se envía al navegador.
-// El asistente atiende 24/7. Con la herramienta notify_provider avisa al prestador de un servicio
-// (p. ej. objeto perdido) y con escalate_to_agent pasa el caso a una persona; las demás dudas las resuelve él.
+// Estilo «Ayuda» de Uber: el asistente responde TODO al instante, 24/7. Lo único que puede tardar es la respuesta del prestador:
+// con notify_provider avisa al prestador de un servicio (objeto perdido, reprogramar, etc.) y con register_report deja
+// registrado un caso grave con folio (sin agente humano en espera).
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-5-5"; // Haiku: respuestas rápidas
 
 const BASE = `Eres el asistente virtual de soporte de FlexiWash, una app mexicana que conecta clientes con prestadores de servicios de limpieza (autos, hogar y muebles).
-Estás disponible las 24 horas, todos los días: nunca menciones horarios de atención ni digas que "no hay nadie".
+Estás disponible las 24 horas, todos los días, y respondes al instante: nunca menciones horarios de atención, ni digas que "no hay nadie", ni que "un agente te responderá después".
+Lo único que puede tardar es la respuesta del PRESTADOR cuando la persona decide contactarlo (por eso solo en ese caso avisas que su respuesta puede tardar y que la verá en este mismo chat).
 Responde SIEMPRE en español de México, con tono amable y directo, en máximo 3 oraciones cortas. Sin markdown.
 Datos de la plataforma:
 - Pagos del cliente: efectivo, tarjeta, PayPal o Monedero FlexiWash (3% de recompensa en servicios elegibles).
@@ -15,24 +17,24 @@ Datos de la plataforma:
 Reglas generales:
 - Resuelve tú las dudas (pagos, seguimiento, calificaciones, cuenta, cómo usar la app). Si no sabes algo, dilo; no inventes precios, políticas ni plazos.
 - No pidas ni aceptes contraseñas, PIN, números completos de tarjeta ni CLABE.
-- Usa escalate_to_agent solo para cobros no reconocidos, robo, acoso, accidentes o asuntos graves que no puedas resolver; avisa brevemente que un agente revisará el caso.`;
+- Usa register_report solo para cobros no reconocidos, robo, acoso, accidentes o asuntos graves que no puedas resolver; avisa brevemente que el caso quedó registrado con un folio (la app lo agrega) y, si hay riesgo para su seguridad, que llame al 911. No prometas que alguien le responderá ni plazos.`;
 
 const ROLE = {
   client: "Estás hablando con un CLIENTE.",
   provider: "Estás hablando con un PRESTADOR. Ayuda con retiros a CLABE (mínimo de retiro, CLABE de 18 dígitos), comisión de 15% por servicio, adeudos por pagos en efectivo (se compensan con saldos y pueden bloquear nuevas solicitudes), verificación de identidad (CURP, INE, selfie), contrato e insignias.",
 };
 
-const LOST = `Objetos perdidos y asuntos que solo el prestador del servicio puede aclarar (olvidé algo, ¿lo encontró?, ¿pasó algo con mis pertenencias durante el servicio?):
+const LOST = `Objetos perdidos, reprogramaciones y asuntos que solo el prestador del servicio puede aclarar (olvidé algo, ¿lo encontró?, ¿pasó algo con mis pertenencias?, quiero cancelar o reprogramar con él) o cuando el cliente pide contactar o avisar a su prestador:
 1) Si hay varios servicios recientes y no es claro cuál, pregunta cuál (por número o nombre del prestador).
 2) Pregunta qué objeto es y dónde cree que lo dejó, una pregunta a la vez.
 3) Con el servicio identificado y una descripción suficiente, llama a notify_provider con un resumen claro para el prestador.
-4) Después explica que el prestador ya fue notificado y se comunicará con el cliente directamente por el chat del servicio o por llamada (recibirá una notificación en la app), y que tú sigues disponible para otras dudas. No prometas que el objeto aparecerá.
+4) Después explica que el prestador ya fue notificado y que su respuesta puede tardar: la verá aquí mismo en este chat y le llegará una notificación en la app; tú sigues disponible al instante para otras dudas. No prometas que el objeto aparecerá ni un tiempo de respuesta.
 5) Si ya avisaste al prestador por ese asunto en esta conversación, no vuelvas a llamar la herramienta: pide que espere su respuesta.`;
 
 const TOOLS = {
-  escalate_to_agent: {
-    name: "escalate_to_agent",
-    description: "Pasa el caso a un agente humano de FlexiWash. Úsala solo para asuntos graves que no puedas resolver.",
+  register_report: {
+    name: "register_report",
+    description: "Registra un reporte con folio para el equipo de FlexiWash. Úsala solo para asuntos graves que no puedas resolver (cobro no reconocido, robo, acoso, accidente).",
     input_schema: { type: "object", properties: { reason: { type: "string", description: "Motivo breve" } }, required: ["reason"] },
   },
   suggest_action: {
@@ -90,7 +92,7 @@ const PROVIDER_RULES = `Reglas para prestadores:
 - Usa las cifras exactas de su cuenta (abajo) cuando pregunte por saldo, comisión, bloqueo o retiros; no inventes montos.
 - La comisión pendiente por servicios en efectivo se descuenta sola de su saldo (ganancias por servicios pagados en la app y recargas). Si no alcanza, queda como deuda; si la deuda supera el límite, no recibe solicitudes nuevas.
 - Para pagar o salir del bloqueo puede recargar saldo en Ganancias → Recargar saldo (por tarjeta, SPEI u OXXO): la recarga se acredita y la deuda se cobra sola. Cuando esa sea la solución, llama a suggest_action con "topup"; si quiere retirar, con "withdraw".
-- Si reporta un problema con un cliente (no se presentó, dirección falsa, mal trato) o una calificación que considera injusta: pide en una pregunta qué pasó y en qué servicio, y luego usa escalate_to_agent. No prometas sanciones, borrar calificaciones ni resultados.`;
+- Si reporta un problema con un cliente (no se presentó, dirección falsa, mal trato) o una calificación que considera injusta: pide en una pregunta qué pasó y en qué servicio, y luego usa register_report. No prometas sanciones, borrar calificaciones ni resultados.`;
 
 export async function askAssistant({ role, name, history, orders, focus, account }) {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -112,7 +114,7 @@ export async function askAssistant({ role, name, history, orders, focus, account
     isClient && !list.length ? "El cliente no tiene servicios registrados en este dispositivo: si pregunta por un objeto perdido, explícale que necesita haber contratado un servicio para poder contactar al prestador." : "",
     who ? `La persona se llama ${who}.` : "",
   ].filter(Boolean).join("\n");
-  const tools = [TOOLS.escalate_to_agent, ...(isClient && list.length ? [TOOLS.notify_provider] : []), ...(!isClient ? [TOOLS.suggest_action] : [])];
+  const tools = [TOOLS.register_report, ...(isClient && list.length ? [TOOLS.notify_provider] : []), ...(!isClient ? [TOOLS.suggest_action] : [])];
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
@@ -123,9 +125,9 @@ export async function askAssistant({ role, name, history, orders, focus, account
   const data = await r.json();
   const blocks = data.content || [];
   let reply = blocks.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-  let escalate = false, notify = null, action = null;
+  let report = null, notify = null, action = null;
   for (const b of blocks.filter((x) => x.type === "tool_use")) {
-    if (b.name === "escalate_to_agent") escalate = true;
+    if (b.name === "register_report") report = { reason: String(b.input?.reason || "").trim().slice(0, 300) };
     if (b.name === "suggest_action" && !isClient && ["topup", "withdraw"].includes(b.input?.action)) action = b.input.action;
     if (b.name === "notify_provider" && !notify) {
       const o = list.find((x) => x.reqId === Number(b.input?.reqId)); // solo servicios de este cliente
@@ -133,10 +135,10 @@ export async function askAssistant({ role, name, history, orders, focus, account
       if (o && summary) notify = { reqId: o.reqId, providerName: o.providerName, summary };
     }
   }
-  if (!reply && notify) reply = `Listo, avisé a ${notify.providerName || "tu prestador"} sobre tu caso. Te contactará directamente por el chat del servicio o por llamada, y te llegará una notificación en la app. Mientras tanto, sigo aquí para lo que necesites.`;
+  if (!reply && notify) reply = `Listo, avisé a ${notify.providerName || "tu prestador"} sobre tu caso. Su respuesta puede tardar: la verás aquí mismo y te llegará una notificación en la app. Mientras tanto, sigo aquí al instante para lo que necesites.`;
   if (!reply && action) reply = action === "topup" ? "Puedes recargar saldo en Ganancias → Recargar saldo; ahí mismo se descuenta tu comisión pendiente." : "Puedes retirar tu saldo desde Ganancias, cuando llegues al mínimo de retiro.";
-  if (!reply && escalate) reply = "Listo, avisé a un agente para que revise tu caso. Te responderá en este mismo chat; mientras tanto, cuéntame todos los detalles que puedas.";
+  if (!reply && report) reply = "Listo, dejé tu caso registrado para su revisión. Si hay riesgo para tu seguridad, llama al 911. Sigo aquí para lo que necesites.";
   reply = reply.slice(0, 500);
   if (!reply) throw Object.assign(new Error("Respuesta vacía"), { code: 502 });
-  return { reply, escalate, notify, action };
+  return { reply, report, notify, action };
 }

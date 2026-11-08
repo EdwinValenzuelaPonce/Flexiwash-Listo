@@ -1534,7 +1534,7 @@ export default function App() {
         <div className="fw-content">{(screens[screen] || renderHome)()}</div>
         {showNotifs && renderNotifSheet()}
         {chatReqId != null && <ChatView reqId={chatReqId} me="client" title={chatName} subtitle="Tu prestador" onClose={() => setComms(null)} />}
-        {supportOpen && <SupportChat role="client" threadId={supportThread} name={profile.nombre} focus={supportFocus} orders={[...sharedReqs].sort((a, b) => (b.createdAt || b.id || 0) - (a.createdAt || a.id || 0)).slice(0, 5).map((r) => ({ reqId: r.id, service: r.service, when: r.when, providerName: r.providerName }))} onClose={() => { setSupportOpen(false); setSupportFocus(null); }} />}
+        {supportOpen && <SupportChat role="client" threadId={supportThread} name={profile.nombre} focus={supportFocus} orders={[...sharedReqs].sort((a, b) => (b.createdAt || b.id || 0) - (a.createdAt || a.id || 0)).slice(0, 5).map((r) => ({ reqId: r.id, service: r.service, when: r.when, providerName: r.providerName }))} onOpenChat={(reqId, providerName) => { setSupportOpen(false); setSupportFocus(null); setComms({ type: "chat", reqId, title: providerName || sharedReqs.find((r) => r.id === reqId)?.providerName }); }} onClose={() => { setSupportOpen(false); setSupportFocus(null); }} />}
         {comms?.type === "call" && currentOrder && <CallView reqId={currentOrder.id} me="client" name={currentOrder.employee?.name} onClose={() => setComms(null)} />}
         {showBottomNav && <BottomNav active={activeTab} onChange={goTab} />}
       </div>
