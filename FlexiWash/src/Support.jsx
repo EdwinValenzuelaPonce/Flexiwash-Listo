@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { X, Send, Headphones } from "lucide-react";
 import { sendSupport, useSupport } from "./store.js";
 
-// Chat de asistencia de FlexiWash: un asistente automático responde dudas frecuentes y, si la persona lo pide,
+// Chat de asistencia de FlexiWash: un asistente con IA (POST /api/assistant) responde al instante; si la IA falla
+// se usan las respuestas frecuentes de abajo. Si la persona lo pide,
 // el hilo se marca como "escalado" para que lo atienda un agente. Los mensajes viven en la colección `support`
 // (store.js); un panel de administrador (pendiente) leería los hilos con escalated:true y respondería con from:"agent".
 const FAQ = {
@@ -28,37 +29,53 @@ export default function SupportChat({ role = "client", threadId, name = "", onCl
   const list = all.filter((m) => m.threadId === threadId);
   const escalated = list.some((m) => m.escalated);
   const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
   const end = useRef(null);
   const faq = FAQ[role] || FAQ.client;
-  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [list.length]);
+  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [list.length, busy]);
 
   const say = (from, t, extra) => sendSupport({ threadId, role, name, from, text: t, ...extra });
   const escalate = () => say("bot", "Listo, avisé a un agente. Te responderá en este mismo chat (horario de atención: lunes a sábado, 9:00 a 18:00). Mientras tanto, cuéntanos tu caso con el mayor detalle posible.", { escalated: true });
+  // Pide la respuesta a la IA con los últimos mensajes del hilo; si falla, responde con las preguntas frecuentes.
+  const reply = async (v) => {
+    const history = [...list, { from: "user", text: v }].slice(-12).map((m) => ({ from: m.from, text: m.text }));
+    setBusy(true);
+    try {
+      const r = await fetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role, name, history }) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const { reply: t, escalate: esc } = await r.json();
+      if (!t) throw new Error("vacío");
+      say("bot", t, esc ? { escalated: true } : undefined);
+    } catch {
+      const hit = faq.find(([, re]) => re.test(v));
+      say("bot", hit ? hit[2] : "No estoy seguro de haberte entendido. Elige un tema de abajo o pulsa «Hablar con un agente».");
+    } finally { setBusy(false); }
+  };
   const send = (t = text) => {
-    const v = t.trim(); if (!v) return;
+    const v = t.trim(); if (!v || busy) return;
     setText(""); say("user", v);
     if (escalated) return;                                   // un agente ya tiene el hilo: el bot no interviene
     if (HUMAN.test(v)) return escalate();
-    const hit = faq.find(([, re]) => re.test(v));
-    say("bot", hit ? hit[2] : "No estoy seguro de haberte entendido. Elige un tema de abajo o pulsa «Hablar con un agente».");
+    reply(v);
   };
 
   return (
     <div className="fws" role="dialog" aria-label="Chat de asistencia">
       <style>{CSS}</style>
-      <div className="fws-head"><div><strong>Asistencia FlexiWash</strong><span>{escalated ? "Un agente atenderá tu caso" : "Asistente virtual · respuestas al instante"}</span></div><button className="fws-x" aria-label="Cerrar asistencia" onClick={onClose}><X size={18} /></button></div>
+      <div className="fws-head"><div><strong>Asistencia FlexiWash</strong><span>{escalated ? "Un agente atenderá tu caso" : "Asistente con IA · respuestas al instante"}</span></div><button className="fws-x" aria-label="Cerrar asistencia" onClick={onClose}><X size={18} /></button></div>
       <div className="fws-list" aria-live="polite">
         <div className="fws-b">Hola{name ? `, ${name.split(" ")[0]}` : ""}. Soy el asistente de FlexiWash. ¿En qué te ayudo?</div>
         {list.map((m) => <div key={m.id} className={`fws-b ${m.from === "user" ? "me" : m.from === "agent" ? "agent" : ""}`}>{m.from === "agent" && <strong style={{ fontSize: 11 }}>Agente FlexiWash<br /></strong>}{m.text}<small>{new Date(m.ts).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></div>)}
+        {busy && <div className="fws-b" aria-label="Escribiendo">Escribiendo…</div>}
         <div ref={end} />
       </div>
       <div className="fws-quick">
-        {!escalated && faq.map(([label, , ans]) => <button key={label} onClick={() => { say("user", label); say("bot", ans); }}>{label}</button>)}
+        {!escalated && faq.map(([label]) => <button key={label} disabled={busy} onClick={() => send(label)}>{label}</button>)}
         {!escalated && <button className="human" onClick={() => { say("user", "Quiero hablar con un agente"); escalate(); }}><Headphones size={12} style={{ verticalAlign: "-2px" }} /> Hablar con un agente</button>}
       </div>
       <form className="fws-form" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <input value={text} maxLength={500} onChange={(e) => setText(e.target.value)} placeholder="Escribe tu duda…" aria-label="Mensaje para asistencia" />
-        <button className="fws-send" type="submit" disabled={!text.trim()} aria-label="Enviar"><Send size={18} /></button>
+        <button className="fws-send" type="submit" disabled={!text.trim() || busy} aria-label="Enviar"><Send size={18} /></button>
       </form>
     </div>
   );

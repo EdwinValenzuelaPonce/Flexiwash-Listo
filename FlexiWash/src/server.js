@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { askAssistant } from "./ai-assistant.js";
 
 const __dir = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
@@ -86,6 +87,7 @@ const removeFile = (name) => { if (name && /^[\w.-]+$/.test(name)) fs.unlink(pat
 const IMG_RE = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/;
 const EXT = { jpeg: "jpg", png: "png", webp: "webp" };
 
+const aiHits = new Map(); // límite simple: 20 mensajes/min por IP
 async function handleApi(req, res, url) {
   const parts = url.pathname.split("/").filter(Boolean); // ["api", ...]
   if (req.method === "GET" && parts[1] === "state") return send(res, 200, db);
@@ -120,6 +122,15 @@ async function handleApi(req, res, url) {
     const p = db.photos.find((x) => String(x.id) === parts[2]);
     if (p) { removeFile(p.file); db.photos = db.photos.filter((x) => x !== p); persist(); broadcast("photos"); }
     return send(res, 200, { ok: true });
+  }
+  // Asistente de IA del chat de soporte: { role, name, history } -> { reply, escalate }
+  if (req.method === "POST" && parts[1] === "assistant") {
+    const ip = req.socket.remoteAddress || "x", now = Date.now();
+    const hits = (aiHits.get(ip) || []).filter((t) => now - t < 60000);
+    if (hits.length >= 20) return send(res, 429, { error: "Demasiados mensajes, espera un momento" });
+    aiHits.set(ip, [...hits, now]);
+    try { return send(res, 200, await askAssistant(await readBody(req))); }
+    catch (e) { return send(res, e.code >= 400 && e.code < 600 ? e.code : 502, { error: e.message }); }
   }
   // Reinicia la demostración: borra solicitudes, mensajes, fotos, etc. (conserva prestadores registrados)
   if (req.method === "POST" && parts[1] === "reset") {
