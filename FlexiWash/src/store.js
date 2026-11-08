@@ -113,8 +113,8 @@ export const setProviderLoc = (id, loc) => requests.wr(requests.rd().map((x) => 
 export const setClientLoc = (id, loc) => requests.wr(requests.rd().map((x) => (x.id === id ? { ...x, clientLoc: loc } : x)));
 
 /* ---- Mensajes y llamadas (simulados; una llamada real requiere WebRTC + servidor) ---- */
-export const sendMessage = (reqId, from, text) =>
-  msgs.wr([...msgs.rd(), { id: Date.now() + Math.random(), reqId, from, text: text.trim().slice(0, 500), ts: Date.now() }].slice(-300));
+export const sendMessage = (reqId, from, text, extra = {}) =>
+  msgs.wr([...msgs.rd(), { id: Date.now() + Math.random(), reqId, from, text: text.trim().slice(0, 500), ts: Date.now(), ...(extra.via === "assistant" ? { via: "assistant" } : {}) }].slice(-300));
 export const useAllMessages = () => msgs.use();
 export const useCalls = () => calls.use();
 export const startCall = (reqId, from) => calls.wr([...calls.rd().filter((c) => c.reqId !== reqId), { reqId, from, status: "ringing", ts: Date.now() }]);

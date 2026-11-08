@@ -10,7 +10,7 @@ const CSS = `
 .fwc-x{width:36px;height:36px;border-radius:50%;border:1px solid var(--fw-line,#dfe8e6);background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .fwc-list{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--fw-bg,#eff7f5)}
 .fwc-b{max-width:80%;padding:9px 12px;border-radius:14px;font-size:13px;line-height:1.35;background:#fff;align-self:flex-start;border:1px solid var(--fw-line,#dfe8e6)}
-.fwc-b.me{align-self:flex-end;background:var(--fw-teal,#0e9c8e);color:#fff;border-color:transparent}.fwc-b small{display:block;opacity:.6;font-size:10px;margin-top:2px}
+.fwc-tag{display:block;font-style:normal;font-size:10px;font-weight:700;letter-spacing:.2px;opacity:.75;margin-bottom:3px}.fwc-b.me{align-self:flex-end;background:var(--fw-teal,#0e9c8e);color:#fff;border-color:transparent}.fwc-b small{display:block;opacity:.6;font-size:10px;margin-top:2px}
 .fwc-quick{display:flex;gap:6px;flex-wrap:wrap;padding:8px 14px 0}.fwc-quick button{border:1px solid var(--fw-line,#dfe8e6);background:#fff;border-radius:999px;padding:6px 11px;font:inherit;font-size:12px;cursor:pointer}
 .fwc-form{display:flex;gap:8px;padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 12px)}
 .fwc-form input{flex:1;font:inherit;font-size:14px;padding:11px 14px;border:1px solid var(--fw-line,#dfe8e6);border-radius:999px;outline:none}
@@ -37,7 +37,7 @@ export function ChatView({ reqId, me, title, subtitle, onClose }) {
       <div className="fwc-head"><div><strong>{title}</strong><span>{subtitle}</span></div><button className="fwc-x" aria-label="Cerrar chat" onClick={onClose}><X size={18} /></button></div>
       <div className="fwc-list" aria-live="polite">
         {list.length === 0 && <p style={{ textAlign: "center", fontSize: 12, color: "#5b7570" }}>Aún no hay mensajes. Escribe el primero.</p>}
-        {list.map((m) => <div key={m.id} className={`fwc-b ${m.from === me ? "me" : ""}`}>{m.text}<small>{new Date(m.ts).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></div>)}
+        {list.map((m) => <div key={m.id} className={`fwc-b ${m.from === me ? "me" : ""}`}>{m.via === "assistant" && <em className="fwc-tag">Aviso del asistente de FlexiWash</em>}{m.text}<small>{new Date(m.ts).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</small></div>)}
         <div ref={end} />
       </div>
       <div className="fwc-quick">{quick.map((q) => <button key={q} onClick={() => send(q)}>{q}</button>)}</div>
