@@ -18,7 +18,7 @@ import {
   FileCheck2, HeartHandshake, Camera, CreditCard, Smartphone, Mail, User,
   Home as HomeIcon, Clock, MapPin, Wallet, RefreshCw, CheckCircle2, Truck,
   Sparkles, Sofa, BedDouble, UtensilsCrossed, Bath, Wind, Droplet, Fan,
-  SprayCan, Car, AlertTriangle, X, Pencil, Camera as CameraIcon, MessageCircle, Headphones, FileText
+  SprayCan, Car, AlertTriangle, X, Pencil, Camera as CameraIcon, MessageCircle, Headphones, FileText, Phone
 } from "lucide-react";
 
 /* ---------------------------------------------------------------------- */
@@ -639,6 +639,12 @@ export default function App() {
               <button className={done ? "fw-btn-outline" : "fw-btn-primary"} onClick={() => { setFocusId(o.id); push("tracking"); }}>Ver seguimiento</button>
               {done && <button className="fw-btn-primary" onClick={() => { setFocusId(o.id); push("rating"); }}>Calificar servicio</button>}
             </div>
+            {r?.status !== "declined" && (
+              <div className="fw-active-actions" style={{ marginTop: 8 }}>
+                <button className="fw-btn-outline" onClick={() => setComms({ type: "chat", reqId: o.id, title: o.employee?.name })}><MessageCircle size={16} style={{ verticalAlign: "-3px" }} /> Mensaje</button>
+                {r?.status === "accepted" && st < 3 && <button className="fw-btn-outline" onClick={() => { setFocusId(o.id); startCall(o.id, "client"); setComms({ type: "call" }); }}><Phone size={16} style={{ verticalAlign: "-3px" }} /> Llamar</button>}
+              </div>
+            )}
           </div>
         );
       })}
@@ -1191,6 +1197,11 @@ export default function App() {
             {orderPhotos.length === 0 && <p className="fw-muted">Tu prestador subirá aquí las fotos del servicio.</p>}
           </>
         )}
+        {currentOrder && curReq && curReq.status !== "declined" && (curReq.status === "pending" || trackingStep >= 3) && (
+          <button className="fw-btn-outline fw-btn-block" onClick={() => setComms({ type: "chat" })}>
+            <MessageCircle size={16} style={{ verticalAlign: "-3px" }} /> Escribir a {currentOrder.employee?.name || "mi prestador"}
+          </button>
+        )}
         {finished && (
           <button className="fw-btn-primary fw-btn-block" onClick={() => push("rating")}>
             Calificar servicio
@@ -1304,6 +1315,7 @@ export default function App() {
                 <span>{money(o.total)}</span>
               </div>
               <p className="fw-muted">{o.lines.map((l) => l.name).join(", ")}</p>
+              <button className="fw-btn-outline" onClick={() => setComms({ type: "chat", reqId: o.id, title: o.employee?.name })}><MessageCircle size={16} style={{ verticalAlign: "-3px" }} /> Escribir a {o.employee?.name || "mi prestador"}</button>
               {(() => { const g = o.ratings.filter(Boolean); const avg = g.length ? g.reduce((a, b) => a + b, 0) / g.length : 0; return <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div className="fw-stars-mini">{"★".repeat(Math.round(avg))}</div><Badge b={serviceBadge(avg)} size={10} /></div>; })()}
             </div>
           ))}
