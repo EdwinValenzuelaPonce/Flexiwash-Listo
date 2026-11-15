@@ -4,6 +4,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Phone, MessageCircle, LocateFixed } from "lucide-react";
 import { useGeolocation, distKm, DEFAULT_CENTER, GEO_MESSAGES } from "./geo.js";
+import { addrLine, mapsUrl } from "./geocode.js";
 
 const AVG_KMH = 30;     // velocidad media para estimar la llegada
 const ARRIVED_KM = 0.08; // a menos de 80 m se considera que ya llegó
@@ -107,12 +108,12 @@ export default function TrackingMap({ reqId = null, step = 0, status = "pending"
   // Publica la ubicación del cliente para que el prestador la vea en su mapa (máx. cada 5 s o al moverse >10 m).
   const lastPub = useRef(null);
   useEffect(() => {
-    if (!reqId || !client || status !== "accepted" || step >= 3) return;
+    if (!useGps || !reqId || !client || status !== "accepted" || step >= 3) return; // una dirección escrita no publica el GPS del cliente
     const l = lastPub.current, age = l ? Date.now() - l.t : Infinity;
     if (l && l.id === reqId && (age < 5000 || (age < 60000 && distKm(l, client) < 0.01))) return;
     lastPub.current = { id: reqId, t: Date.now(), lat: client.lat, lng: client.lng };
     setClientLoc(reqId, { lat: client.lat, lng: client.lng, ts: Date.now() });
-  }, [reqId, status, step, client?.lat, client?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useGps, reqId, status, step, client?.lat, client?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
   const provider = status === "accepted" && step >= 1 && step < 3 ? providerLoc : null;
   const km = client && provider ? distKm(client, provider) : 0;
   const text = statusText({ step, status, providerName, street, km, hasLoc: !!(client && provider) });
@@ -162,19 +163,25 @@ export function PlaceMap({ label, target = null, useGps = true }) {
 }
 
 // Mapa del prestador: su posición (GPS propio) y la del cliente (publicada por el celular del cliente).
-export function ProviderMap({ clientLoc = null, street = "Domicilio del cliente", active = true }) {
+export function ProviderMap({ clientLoc = null, street = "Domicilio del cliente", address = null, active = true }) {
   const geo = useGeolocation(active);
   const me = geo.pos;
-  const km = me && clientLoc ? distKm(me, clientLoc) : null;
+  // Si el cliente pidió el servicio a una dirección ESCRITA, el destino es esa dirección (no el celular del cliente).
+  // Solo si pidió con «Ubicación actual» se usa la ubicación en vivo que publica su celular.
+  const typed = !!address && !address.gps;
+  const dest = typed ? (address.lat != null ? { lat: address.lat, lng: address.lng } : null) : clientLoc;
+  const km = me && dest ? distKm(me, dest) : null;
+  const url = mapsUrl(address, dest);
   return (
     <div className="fwm">
       <style>{CSS}</style>
-      <LiveMap client={clientLoc} provider={me} label="Mapa del servicio" />
+      <LiveMap client={dest} provider={me} label="Mapa del servicio" />
       <GeoNote geo={geo} />
       <div className="fwm-eta" aria-live="polite"><div>
-        <strong>{km == null ? "Esperando ubicación del cliente…" : km <= ARRIVED_KM ? "Ya llegaste" : `A ${km.toFixed(1)} km · ~${Math.max(1, Math.round((km / AVG_KMH) * 60))} min`}</strong>
-        <span>{clientLoc ? street : "El cliente debe abrir la app y permitir su ubicación (HTTPS)."}</span>
+        <strong>{km == null ? (typed ? "Dirección del servicio" : "Esperando ubicación del cliente…") : km <= ARRIVED_KM ? "Ya llegaste" : `A ${km.toFixed(1)} km · ~${Math.max(1, Math.round((km / AVG_KMH) * 60))} min`}</strong>
+        <span>{dest ? street : typed ? `No pudimos ubicarla en el mapa: ${addrLine(address)}` : "El cliente debe abrir la app y permitir su ubicación (HTTPS)."}</span>
       </div></div>
+      {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ display: "block", textAlign: "center", fontWeight: 700, fontSize: 13, padding: 11, borderRadius: 12, border: "1px solid var(--fw-line,#dfe8e6)", color: "var(--fw-teal-dark,#0B7F74)", textDecoration: "none" }}>Cómo llegar</a>}
     </div>
   );
 }

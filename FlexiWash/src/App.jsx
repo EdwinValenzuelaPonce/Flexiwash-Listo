@@ -514,6 +514,14 @@ export default function App() {
       zone: address?.colonia || "", address, note: order.note, slot: order.slot,
       when: `${order.slot.label} · ${pad(order.slot.hour)}:00`, price: totals.subtotal, total: order.total, payMethod: paymentMethod,
     });
+    if (address && !address.gps && address.lat == null) {
+      geocodeAddress(address).then((c) => {
+        if (!c) return;
+        const withLoc = { ...address, lat: c.lat, lng: c.lng, noCoords: false };
+        updateRequest(order.id, { address: withLoc });
+        setCurrentOrder((o) => (o && o.id === order.id ? { ...o, address: withLoc } : o));
+      });
+    }
     setSeen((m) => ({ ...m, [order.id]: "pending:0" }));
     notify("Solicitud enviada", `Esperando confirmación de ${order.employee?.name}.`, { go: "tracking" });
     push("confirmation");
@@ -548,6 +556,20 @@ export default function App() {
   const cardErr = validateCard(card);
   const [addrBusy, setAddrBusy] = useState(false);
   const [geoErr, setGeoErr] = useState("");
+  // Direcciones escritas guardadas sin coordenadas (versiones anteriores o sin red): se ubican en segundo plano, de una en una.
+  // Una dirección escrita nunca usa el GPS del dispositivo.
+  useEffect(() => {
+    const pend = addresses.find((a) => !a.gps && a.lat == null && !a.tried);
+    if (!pend) return undefined;
+    let alive = true;
+    (async () => {
+      const c = await geocodeAddress(pend);
+      if (!alive) return;
+      setAddresses((l) => l.map((a) => (a.id === pend.id ? { ...a, tried: true, ...(c ? { lat: c.lat, lng: c.lng, noCoords: false } : { noCoords: true }) } : a)));
+    })();
+    return () => { alive = false; };
+  }, [addresses]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const saveAddress = async () => {
     const e = validateAddress(addrForm);
     setAddrErr(e);

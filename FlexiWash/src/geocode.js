@@ -60,7 +60,15 @@ export async function locateAddress() {
 // ¿Cómo se ubica al cliente en el mapa para esta dirección?
 //  - gps: ubicación en vivo del dispositivo · fixed: coordenadas de la dirección escrita
 //  - dirección escrita sin coordenadas (no se pudo geocodificar): sin marcador · dirección vieja sin datos: GPS (como antes)
+// Solo las direcciones tomadas con «Usar mi ubicación actual» (gps) siguen al GPS del dispositivo.
+// Una dirección ESCRITA nunca usa el GPS: si aún no tiene coordenadas, no hay marcador (se ubica en segundo plano).
 export const locOf = (a) => {
-  if (!a || a.gps || (a.lat == null && !a.noCoords)) return { useGps: true, target: null };
+  if (!a || a.gps) return { useGps: true, target: null };
   return { useGps: false, target: a.lat != null ? { lat: a.lat, lng: a.lng } : null };
+};
+
+// Enlace «Cómo llegar» (Google Maps) hacia la dirección del servicio: con coordenadas si las hay; si no, con el texto escrito.
+export const mapsUrl = (a, dest = null) => {
+  const q = dest ? `${dest.lat},${dest.lng}` : a && !a.gps && a.street ? `${addrLine(a)}, Culiacán, Sinaloa, México` : "";
+  return q ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}` : "";
 };

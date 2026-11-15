@@ -232,7 +232,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
           <div className="fw-provider-request is-active">
             <div className="fw-provider-request-head"><div className="fw-provider-request-icon">{React.createElement(ICONS[active.category], { size: 22 })}</div><div><strong>{active.service}</strong><span>{active.detail}</span></div><b>{money(net(active.price))}</b></div>
             <div className="fw-provider-meta"><span><MapPin size={14} /> {active.zone}</span><span>{active.when}</span></div>
-            <ProviderMap clientLoc={active.clientLoc} street={active.address?.street} />
+            <ProviderMap clientLoc={active.clientLoc} street={active.address?.street} address={active.address} />
             <div className="fw-provider-progress">{STEPS.map((s, i) => <span key={s} className={i <= step ? "is-done" : ""}>{s}</span>)}</div>
             {sharing && <p className="fw-muted" role="status">{geo.status === "ok" ? "Compartiendo tu ubicación con el cliente." : geo.status === "loading" ? "Obteniendo tu ubicación…" : "No se está compartiendo tu ubicación: activa el permiso de ubicación del navegador (requiere HTTPS)."}</p>}
             <PhotoSlots reqId={active.id} providerId={me} />
