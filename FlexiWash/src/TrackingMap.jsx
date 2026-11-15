@@ -169,7 +169,9 @@ export function ProviderMap({ clientLoc = null, street = "Domicilio del cliente"
   // Si el cliente pidió el servicio a una dirección ESCRITA, el destino es esa dirección (no el celular del cliente).
   // Solo si pidió con «Ubicación actual» se usa la ubicación en vivo que publica su celular.
   const typed = !!address && !address.gps;
-  const dest = typed ? (address.lat != null ? { lat: address.lat, lng: address.lng } : null) : clientLoc;
+  // Con «ubicación actual»: la posición en vivo del cliente; si aún no llega, la ubicación guardada al pedir.
+  const saved = address?.lat != null ? { lat: address.lat, lng: address.lng } : null;
+  const dest = typed ? saved : clientLoc || saved;
   const km = me && dest ? distKm(me, dest) : null;
   const url = mapsUrl(address, dest);
   return (

@@ -12,11 +12,11 @@ import SupportChat from "./Support.jsx";
 import Register from "./Register.jsx";
 import HomeAddress from "./HomeAddress.jsx";
 import ManageService from "./ManageService.jsx";
-import { geocodeAddress, locateAddress, addrLine, locOf } from "./geocode.js";
+import { locateAddress, addrLine, locOf } from "./geocode.js";
 import { Badge, BadgeRow, providerBadges, serviceBadge } from "./badges.jsx";
 import { ChatView, CallView, useIncomingCall } from "./Comms.jsx";
 import { usePersistentState, clearPersistedState } from "./usePersistentState.js";
-import { formatCardNumber, formatExp, onlyDigits, validEmail, validPhone, validateCard, validateAddress, testCard } from "./validators.js";
+import { formatCardNumber, formatExp, onlyDigits, validEmail, validPhone, validateCard, testCard } from "./validators.js";
 import {
   ChevronLeft, Search, Bell, ShoppingCart, Plus, Minus, Star, ShieldCheck,
   FileCheck2, HeartHandshake, Camera, CreditCard, Smartphone, Mail, User,
@@ -383,11 +383,6 @@ export default function App() {
   const [slotHour, setSlotHour] = useState(null);
   const [chosenProvider, setChosenProvider] = useState(null);
   const [addresses, setAddresses] = usePersistentState("addresses", []);
-  const [addressId, setAddressId] = usePersistentState("addressId", null);
-  const emptyAddr = { label: "", street: "", colonia: "", cp: "", ref: "" };
-  const [addrForm, setAddrForm] = useState(emptyAddr);
-  const [addrErr, setAddrErr] = useState({});
-  const [showAddrForm, setShowAddrForm] = useState(false);
   const [orderNote, setOrderNote] = useState("");
   const [comms, setComms] = useState(null);
   const [supportOpen, setSupportOpen] = useState(false);
@@ -514,13 +509,13 @@ export default function App() {
       zone: address?.colonia || "", address, note: order.note, slot: order.slot,
       when: `${order.slot.label} · ${pad(order.slot.hour)}:00`, price: totals.subtotal, total: order.total, payMethod: paymentMethod,
     });
-    if (address && !address.gps && address.lat == null) {
-      geocodeAddress(address).then((c) => {
-        if (!c) return;
-        const withLoc = { ...address, lat: c.lat, lng: c.lng, noCoords: false };
-        updateRequest(order.id, { address: withLoc });
-        setCurrentOrder((o) => (o && o.id === order.id ? { ...o, address: withLoc } : o));
-      });
+    // Al pedir, se actualiza la ubicación actual (por si el cliente se movió) y se corrige la solicitud.
+    if (address?.gps) {
+      locateAddress().then((a) => {
+        const fresh = { ...address, ...a, id: address.id, gps: true };
+        updateRequest(order.id, { address: fresh });
+        setCurrentOrder((o) => (o && o.id === order.id ? { ...o, address: fresh } : o));
+      }).catch(() => {});
     }
     setSeen((m) => ({ ...m, [order.id]: "pending:0" }));
     notify("Solicitud enviada", `Esperando confirmación de ${order.employee?.name}.`, { go: "tracking" });
@@ -552,42 +547,16 @@ export default function App() {
     push("thanks");
   };
 
-  const address = addresses.find((a) => a.id === addressId) || addresses[0];
+  // Los servicios se piden SOLO a la ubicación actual (GPS): ninguna dirección escrita se usa como destino.
+  const address = addresses.find((a) => a.gps) || null;
   const cardErr = validateCard(card);
-  const [addrBusy, setAddrBusy] = useState(false);
   const [geoErr, setGeoErr] = useState("");
-  // Direcciones escritas guardadas sin coordenadas (versiones anteriores o sin red): se ubican en segundo plano, de una en una.
-  // Una dirección escrita nunca usa el GPS del dispositivo.
-  useEffect(() => {
-    const pend = addresses.find((a) => !a.gps && a.lat == null && !a.tried);
-    if (!pend) return undefined;
-    let alive = true;
-    (async () => {
-      const c = await geocodeAddress(pend);
-      if (!alive) return;
-      setAddresses((l) => l.map((a) => (a.id === pend.id ? { ...a, tried: true, ...(c ? { lat: c.lat, lng: c.lng, noCoords: false } : { noCoords: true }) } : a)));
-    })();
-    return () => { alive = false; };
-  }, [addresses]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const saveAddress = async () => {
-    const e = validateAddress(addrForm);
-    setAddrErr(e);
-    if (Object.keys(e).length) return;
-    // El mapa y el seguimiento usan la dirección ESCRITA (se ubica con su geocodificación), no la ubicación del dispositivo.
-    setAddrBusy(true);
-    const c = await geocodeAddress(addrForm);
-    setAddrBusy(false);
-    const a = { ...addrForm, id: Date.now(), ...(c ? { lat: c.lat, lng: c.lng } : { noCoords: true }) };
-    setAddresses((l) => [...l, a]); setAddressId(a.id);
-    setAddrForm(emptyAddr); setShowAddrForm(false);
-  };
   // «Usar mi ubicación actual»: agrega (o actualiza) la dirección «Ubicación actual» con el GPS y la selecciona.
   const locateMe = async () => {
     try {
       const a = await locateAddress();
       const rec = { id: Date.now(), label: a.label, street: a.street, colonia: a.colonia, cp: a.cp, ref: "", lat: a.lat, lng: a.lng, gps: true };
-      setAddresses((l) => [...l.filter((x) => !x.gps), rec]); setAddressId(rec.id);
+      setAddresses([rec]);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   };
@@ -603,30 +572,15 @@ export default function App() {
     if (isNew) push("register"); else goTab("home");
   };
   const completeRegistration = ({ nombre, telefono, email, address: a }) => {
-    let rec = null;
-    if (a) rec = { id: Date.now(), label: a.label, street: a.street, colonia: a.colonia, cp: a.cp, ref: a.ref || "", ...(a.gps ? { gps: true } : {}), ...(a.lat != null ? { lat: a.lat, lng: a.lng } : {}), ...(a.noCoords ? { noCoords: true } : {}) };
+    // Solo se guarda la ubicación actual (GPS); una dirección escrita ya no se usa.
+    const rec = a?.gps ? { id: Date.now(), label: a.label, street: a.street, colonia: a.colonia, cp: a.cp, ref: "", gps: true, lat: a.lat, lng: a.lng } : null;
     setProfile({ nombre, apellido: "", telefono, email: email || "", cp: a?.cp || "", colonia: a?.colonia || "", calle: a?.calle || "", numero: a?.numero || "", addrId: rec?.id ?? null });
     setAddresses(rec ? [rec] : []);
-    setAddressId(rec ? rec.id : null);
     setLoginForm({ phone: "", email: "", pass: "" });
     goTab("home");
   };
-  // «Guardar» en Perfil: la dirección del perfil se refleja en la lista de direcciones (la que se despliega en Inicio).
-  const saveProfile = async () => {
-    setEditingProfile(false);
-    const street = `${profile.calle} ${profile.numero}`.trim();
-    if (Object.keys(validateAddress({ label: "Casa", street, colonia: profile.colonia, cp: profile.cp })).length) return;
-    const linked = addresses.find((a) => a.id === profile.addrId);
-    const dup = !linked && addresses.some((a) => a.street === street && a.cp === profile.cp);
-    if (dup) return;
-    const c = await geocodeAddress({ street, colonia: profile.colonia, cp: profile.cp });
-    const coords = c ? { lat: c.lat, lng: c.lng, noCoords: false, gps: false } : { lat: undefined, lng: undefined, noCoords: true, gps: false };
-    if (linked) setAddresses((l) => l.map((a) => (a.id === linked.id ? { ...a, street, colonia: profile.colonia, cp: profile.cp, ...coords } : a)));
-    else {
-      const rec = { id: Date.now(), label: "Casa", street, colonia: profile.colonia, cp: profile.cp, ref: "", ...coords };
-      setAddresses((l) => [...l, rec]); setAddressId(rec.id); setProfile((p) => ({ ...p, addrId: rec.id }));
-    }
-  };
+  // «Guardar» en Perfil: guarda nombre y teléfono (la ubicación se obtiene con «Usar mi ubicación actual»).
+  const saveProfile = () => { setEditingProfile(false); };
   const allMsgs = useAllMessages();
   const [msgSeen, setMsgSeen] = usePersistentState("msgSeenTs", () => Date.now());
   // Chat abierto: puede venir de una notificación (con reqId propio) o del botón del seguimiento (pedido actual)
@@ -882,7 +836,7 @@ export default function App() {
   const renderHome = () => (
     <div className="fw-screen">
       <div className="fw-home-top">
-        <HomeAddress addresses={addresses} selectedId={address?.id} onSelect={setAddressId} onManage={() => push("address")} onLocate={locateMe} />
+        <HomeAddress address={address} onLocate={locateMe} />
         <div className="fw-home-top-icons">
           <button className="fw-icon-btn" aria-label={`Notificaciones${unread ? `, ${unread} sin leer` : ""}`} aria-haspopup="dialog" aria-expanded={showNotifs} onClick={() => setShowNotifs(true)}>
             <Bell size={19} />
@@ -1123,8 +1077,8 @@ export default function App() {
         <div className="fw-order-line"><span>Fecha y hora</span><strong>{dayLabel(slotDate)} · {pad(slotHour)}:00</strong></div>
         <div className="fw-order-line"><span>Prestador</span><strong>{chosenProvider?.name}</strong></div>
         <div className="fw-order-line"><span>Dirección</span>
-          <span style={{ textAlign: "right" }}><strong>{address ? address.label : "Sin dirección"}</strong><br />{address && addrLine(address)}<br />
-            <button className="fw-linklike" onClick={() => push("address")}>{address ? "Cambiar" : "Agregar dirección"}</button></span></div>
+          <span style={{ textAlign: "right" }}><strong>{address ? "Ubicación actual" : "Sin ubicación"}</strong><br />{address && addrLine(address)}<br />
+            <button className="fw-linklike" onClick={() => push("address")}>{address ? "Actualizar" : "Obtener ubicación"}</button></span></div>
       </div>
       <div className="fw-card">
         {totals.lines.map((l, i) => <div key={i} className="fw-order-line"><span>{l.qty}× {l.name}</span><span>{money(l.price * l.qty)}</span></div>)}
@@ -1143,35 +1097,19 @@ export default function App() {
 
   const renderAddress = () => (
     <div className="fw-screen fw-screen--pad-bottom">
-      <TopBar title="Dirección del servicio" onBack={pop} />
-      <div className="fw-provider-list">
-        {addresses.map((a) => (
-          <button key={a.id} className={`fw-employee-card fw-pick ${a.id === addressId ? "is-on" : ""}`} aria-pressed={a.id === addressId} onClick={() => setAddressId(a.id)}>
+      <TopBar title="Ubicación del servicio" onBack={pop} />
+      <div className="fw-card fwp-col">
+        <p className="fw-muted" style={{ margin: 0 }}>El servicio se solicita a tu ubicación actual.</p>
+        {address ? (
+          <div className="fw-employee-card is-on">
             <div className="fw-avatar"><MapPin size={20} /></div>
-            <div style={{ textAlign: "left" }}><strong>{a.label}</strong><br /><span className="fw-muted">{addrLine(a)}{a.ref && ` · ${a.ref}`}</span></div>
-          </button>
-        ))}
+            <div style={{ textAlign: "left" }}><strong>Ubicación actual</strong><br /><span className="fw-muted">{address.street && address.street !== "Mi ubicación actual" ? addrLine(address) : address.lat != null ? `Ubicación por GPS (${Number(address.lat).toFixed(5)}, ${Number(address.lng).toFixed(5)})` : ""}</span></div>
+          </div>
+        ) : <p className="fw-muted" style={{ margin: 0 }}>Aún no has obtenido tu ubicación.</p>}
+        <button className="fw-btn-outline fw-btn-block" onClick={async () => { setGeoErr(""); const r = await locateMe(); if (!r.ok) setGeoErr(r.error); }}>{address ? "Actualizar mi ubicación" : "Usar mi ubicación actual"}</button>
+        {geoErr && <p className="fw-field-err" role="alert">{geoErr}</p>}
       </div>
-      {showAddrForm ? (
-        <div className="fw-card fwp-col">
-          {[["label", "Nombre (Casa, Trabajo…)"], ["street", "Calle y número"], ["colonia", "Colonia"], ["cp", "Código postal"], ["ref", "Referencias (opcional)"]].map(([k, ph]) => (
-            <div key={k}>
-              <input className="fw-input" placeholder={ph} aria-label={ph} inputMode={k === "cp" ? "numeric" : undefined} maxLength={k === "cp" ? 5 : 80}
-                value={addrForm[k]} onChange={(e) => setAddrForm({ ...addrForm, [k]: k === "cp" ? onlyDigits(e.target.value) : e.target.value })} />
-              {addrErr[k] && <p className="fw-field-err" role="alert">{addrErr[k]}</p>}
-            </div>
-          ))}
-          <button className="fw-btn-primary fw-btn-block" onClick={saveAddress} disabled={addrBusy}>{addrBusy ? "Ubicando dirección…" : "Guardar dirección"}</button>
-          <button className="fw-linklike" onClick={() => { setShowAddrForm(false); setAddrErr({}); }}>Cancelar</button>
-        </div>
-      ) : (
-        <>
-          <button className="fw-btn-outline fw-btn-block" onClick={async () => { setGeoErr(""); const r = await locateMe(); if (!r.ok) setGeoErr(r.error); }}>Usar mi ubicación actual</button>
-          {geoErr && <p className="fw-field-err" role="alert">{geoErr}</p>}
-          <button className="fw-btn-outline fw-btn-block" onClick={() => setShowAddrForm(true)}>+ Agregar nueva dirección</button>
-        </>
-      )}
-      <div className="fw-summary-bar"><button className="fw-btn-primary fw-btn-block" disabled={!address} onClick={pop}>Usar esta dirección</button></div>
+      <div className="fw-summary-bar"><button className="fw-btn-primary fw-btn-block" disabled={!address} onClick={pop}>Usar esta ubicación</button></div>
     </div>
   );
 
@@ -1487,15 +1425,10 @@ export default function App() {
         <input className="fw-input" disabled={!editingProfile} value={profile.nombre} onChange={(e) => setProfile({ ...profile, nombre: e.target.value })} placeholder="Nombre(s)" />
         <input className="fw-input" disabled={!editingProfile} value={profile.apellido} onChange={(e) => setProfile({ ...profile, apellido: e.target.value })} placeholder="Apellido(s)" />
         <input className="fw-input" disabled={!editingProfile} value={profile.telefono} onChange={(e) => setProfile({ ...profile, telefono: e.target.value })} placeholder="Teléfono" />
-        <p className="fw-section-title" style={{ marginTop: 8 }}>Dirección 1</p>
-        <div className="fw-cardform-row">
-          <input className="fw-input" disabled={!editingProfile} value={profile.cp} onChange={(e) => setProfile({ ...profile, cp: e.target.value })} placeholder="C.P." />
-          <input className="fw-input" disabled={!editingProfile} value={profile.colonia} onChange={(e) => setProfile({ ...profile, colonia: e.target.value })} placeholder="Colonia" />
-        </div>
-        <div className="fw-cardform-row">
-          <input className="fw-input" disabled={!editingProfile} value={profile.calle} onChange={(e) => setProfile({ ...profile, calle: e.target.value })} placeholder="Calle" />
-          <input className="fw-input" disabled={!editingProfile} value={profile.numero} onChange={(e) => setProfile({ ...profile, numero: e.target.value })} placeholder="No. exterior" />
-        </div>
+        <p className="fw-section-title" style={{ marginTop: 8 }}>Ubicación actual</p>
+        <p className="fw-muted" style={{ margin: 0 }}>{address ? (address.street && address.street !== "Mi ubicación actual" ? addrLine(address) : "Ubicación por GPS") : "Aún no has obtenido tu ubicación."}</p>
+        <button type="button" className="fw-btn-outline" onClick={async () => { setGeoErr(""); const r = await locateMe(); if (!r.ok) setGeoErr(r.error); }}>{address ? "Actualizar mi ubicación" : "Usar mi ubicación actual"}</button>
+        {geoErr && <p className="fw-field-err" role="alert">{geoErr}</p>}
       </div>
 
       <PlaceMap label={address ? addrLine(address) : ""} {...locOf(address)} />
