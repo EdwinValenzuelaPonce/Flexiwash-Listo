@@ -100,9 +100,10 @@ const statusText = ({ step, status, providerName, street, km, hasLoc }) => {
   return status === "accepted" ? ["Confirmado", `${providerName} saldrá hacia tu domicilio`] : ["Esperando confirmación", `${providerName} aún no responde`];
 };
 
-export default function TrackingMap({ reqId = null, step = 0, status = "pending", providerName = "Tu prestador", street = "Tu dirección", providerLoc = null, onCall, onChat, compact = false, onOpen }) {
-  const geo = useGeolocation(true);
-  const client = geo.pos;
+export default function TrackingMap({ reqId = null, step = 0, status = "pending", providerName = "Tu prestador", street = "Tu dirección", providerLoc = null, onCall, onChat, compact = false, onOpen, target = null, useGps = true }) {
+  // useGps: sigue el GPS del dispositivo · si no, usa las coordenadas de la dirección elegida (target).
+  const geo = useGeolocation(useGps);
+  const client = useGps ? geo.pos : target;
   // Publica la ubicación del cliente para que el prestador la vea en su mapa (máx. cada 5 s o al moverse >10 m).
   const lastPub = useRef(null);
   useEffect(() => {
@@ -131,7 +132,8 @@ export default function TrackingMap({ reqId = null, step = 0, status = "pending"
     <div className="fwm">
       <style>{CSS}</style>
       <LiveMap client={client} provider={provider} label={`Mapa del servicio. ${text[0]}. ${text[1]}`} />
-      <GeoNote geo={geo} />
+      {useGps && <GeoNote geo={geo} />}
+      {!useGps && !target && <div className="fwm-geo" role="status"><span>No pudimos ubicar tu dirección en el mapa. Elige «Usar mi ubicación actual» en Inicio para compartirla con tu prestador.</span></div>}
       <div className="fwm-eta" aria-live="polite"><div><strong>{text[0]}</strong><span>{text[1]}</span></div></div>
       {showActions && (
         <div className="fwm-actions">
@@ -144,16 +146,17 @@ export default function TrackingMap({ reqId = null, step = 0, status = "pending"
 }
 
 // Mapa con la ubicación actual del dispositivo (p. ej. en el perfil).
-export function PlaceMap({ label }) {
-  const geo = useGeolocation(true);
+export function PlaceMap({ label, target = null, useGps = true }) {
+  const geo = useGeolocation(useGps);
+  const pos = useGps ? geo.pos : target;
   return (
     <div className="fwm-box" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <style>{CSS}</style>
       <div className="fwm-box">
-        <LiveMap client={geo.pos} provider={null} height={170} label="Mapa con tu ubicación" />
+        <LiveMap client={pos} provider={null} height={170} label={useGps ? "Mapa con tu ubicación" : "Mapa de tu dirección"} />
         {label?.trim() && <span className="fwm-cap">{label}</span>}
       </div>
-      <GeoNote geo={geo} />
+      {useGps && <GeoNote geo={geo} />}
     </div>
   );
 }

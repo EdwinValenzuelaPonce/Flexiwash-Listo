@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { onlyDigits, validPhone, validateAddress } from "./validators.js";
+import { geocodeAddress, locateAddress } from "./geocode.js";
 
 // Registro del cliente/usuario: nombre y teléfono obligatorios; la dirección es OPCIONAL
 // (si el cliente no la captura aquí, puede agregarla después desde Inicio o al contratar un servicio).
@@ -13,9 +14,20 @@ const ADDR_KEYS = ["calle", "numero", "colonia", "cp", "ref"];
 export default function Register({ TopBar, initialPhone = "", initialEmail = "", onDone, onBack }) {
   const [f, setF] = useState({ nombre: "", telefono: onlyDigits(initialPhone).slice(0, 10), calle: "", numero: "", colonia: "", cp: "", ref: "" });
   const [err, setErr] = useState({});
-  const set = (k, v) => { setF((p) => ({ ...p, [k]: v })); setErr((p) => ({ ...p, [k]: undefined })); };
+  const [loc, setLoc] = useState(null); // ubicación actual (GPS) usada como dirección: { lat, lng }
+  const [busy, setBusy] = useState("");
+  const set = (k, v) => { setF((p) => ({ ...p, [k]: v })); setErr((p) => ({ ...p, [k]: undefined })); if (ADDR_KEYS.includes(k) && k !== "ref") setLoc(null); };
+  const locateMe = async () => {
+    setBusy("loc"); setErr((p) => ({ ...p, loc: undefined }));
+    try {
+      const a = await locateAddress();
+      setF((p) => ({ ...p, calle: a.calle, numero: a.numero, colonia: a.colonia, cp: a.cp }));
+      setLoc({ lat: a.lat, lng: a.lng });
+    } catch (e) { setErr((p) => ({ ...p, loc: e.message })); }
+    setBusy("");
+  };
 
-  const submit = () => {
+  const submit = async () => {
     const e = {};
     if (f.nombre.trim().length < 3 || !/^[\p{L}\s.'-]+$/u.test(f.nombre.trim())) e.nombre = "Escribe tu nombre completo.";
     if (!validPhone(f.telefono)) e.telefono = "Ingresa un número de 10 dígitos.";
@@ -23,7 +35,11 @@ export default function Register({ TopBar, initialPhone = "", initialEmail = "",
     // La dirección es opcional: solo se valida si el cliente empezó a llenarla.
     const wantsAddress = ["calle", "numero", "colonia", "cp"].some((k) => f[k].trim());
     let address = null;
-    if (wantsAddress) {
+    if (loc) {
+      // Dirección tomada de la ubicación actual: no exige calle/colonia completas (el GPS ya la ubica).
+      const street = `${f.calle} ${f.numero}`.trim() || "Mi ubicación actual";
+      address = { label: "Ubicación actual", street, calle: f.calle.trim(), numero: f.numero.trim(), colonia: f.colonia.trim(), cp: f.cp, ref: f.ref.trim(), lat: loc.lat, lng: loc.lng, gps: true };
+    } else if (wantsAddress) {
       const street = `${f.calle} ${f.numero}`.trim();
       const a = validateAddress({ label: "Casa", street, colonia: f.colonia, cp: f.cp });
       if (a.street) e.calle = !f.calle.trim() ? "Escribe la calle." : !f.numero.trim() ? "Falta el número exterior." : a.street;
@@ -33,6 +49,13 @@ export default function Register({ TopBar, initialPhone = "", initialEmail = "",
     }
     setErr(e);
     if (Object.keys(e).length) return;
+    // Dirección escrita: se ubica en el mapa a partir de lo que se escribió (no de la ubicación del dispositivo).
+    if (address && !address.gps) {
+      setBusy("save");
+      const c = await geocodeAddress(address);
+      setBusy("");
+      if (c) { address.lat = c.lat; address.lng = c.lng; } else address.noCoords = true;
+    }
     onDone({ nombre: f.nombre.trim(), telefono: f.telefono, email: initialEmail.trim(), address });
   };
 
@@ -65,8 +88,10 @@ export default function Register({ TopBar, initialPhone = "", initialEmail = "",
         </div>
         {field("ref", "Referencias (opcional)", { input: { maxLength: 80 } })}
 
-        <button className="fw-btn-primary fw-btn-block" onClick={submit}>Crear cuenta</button>
-        <button className="fw-linklike" onClick={() => { setF((p) => ({ ...p, ...Object.fromEntries(ADDR_KEYS.map((k) => [k, ""])) })); setErr({}); }}>
+        {err.loc && <p className="fw-field-err" role="alert">{err.loc}</p>}
+        <button type="button" className="fw-btn-outline fw-btn-block" onClick={locateMe} disabled={!!busy}>{busy === "loc" ? "Obteniendo ubicación…" : loc ? "Ubicación actual lista ✓ (tocar para actualizar)" : "Usar mi ubicación actual"}</button>
+        <button className="fw-btn-primary fw-btn-block" onClick={submit} disabled={!!busy}>{busy === "save" ? "Ubicando tu dirección…" : "Crear cuenta"}</button>
+        <button className="fw-linklike" onClick={() => { setF((p) => ({ ...p, ...Object.fromEntries(ADDR_KEYS.map((k) => [k, ""])) })); setLoc(null); setErr({}); }}>
           Omitir dirección por ahora
         </button>
       </div>

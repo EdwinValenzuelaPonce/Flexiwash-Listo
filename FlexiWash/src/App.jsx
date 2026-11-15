@@ -12,6 +12,7 @@ import SupportChat from "./Support.jsx";
 import Register from "./Register.jsx";
 import HomeAddress from "./HomeAddress.jsx";
 import ManageService from "./ManageService.jsx";
+import { geocodeAddress, locateAddress, addrLine, locOf } from "./geocode.js";
 import { Badge, BadgeRow, providerBadges, serviceBadge } from "./badges.jsx";
 import { ChatView, CallView, useIncomingCall } from "./Comms.jsx";
 import { usePersistentState, clearPersistedState } from "./usePersistentState.js";
@@ -545,13 +546,28 @@ export default function App() {
 
   const address = addresses.find((a) => a.id === addressId) || addresses[0];
   const cardErr = validateCard(card);
-  const saveAddress = () => {
+  const [addrBusy, setAddrBusy] = useState(false);
+  const [geoErr, setGeoErr] = useState("");
+  const saveAddress = async () => {
     const e = validateAddress(addrForm);
     setAddrErr(e);
     if (Object.keys(e).length) return;
-    const a = { ...addrForm, id: Date.now() };
+    // El mapa y el seguimiento usan la dirección ESCRITA (se ubica con su geocodificación), no la ubicación del dispositivo.
+    setAddrBusy(true);
+    const c = await geocodeAddress(addrForm);
+    setAddrBusy(false);
+    const a = { ...addrForm, id: Date.now(), ...(c ? { lat: c.lat, lng: c.lng } : { noCoords: true }) };
     setAddresses((l) => [...l, a]); setAddressId(a.id);
     setAddrForm(emptyAddr); setShowAddrForm(false);
+  };
+  // «Usar mi ubicación actual»: agrega (o actualiza) la dirección «Ubicación actual» con el GPS y la selecciona.
+  const locateMe = async () => {
+    try {
+      const a = await locateAddress();
+      const rec = { id: Date.now(), label: a.label, street: a.street, colonia: a.colonia, cp: a.cp, ref: "", lat: a.lat, lng: a.lng, gps: true };
+      setAddresses((l) => [...l.filter((x) => !x.gps), rec]); setAddressId(rec.id);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
   };
   const submitLogin = (kind) => {
     const { phone, email, pass } = loginForm;
@@ -566,7 +582,7 @@ export default function App() {
   };
   const completeRegistration = ({ nombre, telefono, email, address: a }) => {
     let rec = null;
-    if (a) rec = { id: Date.now(), label: a.label, street: a.street, colonia: a.colonia, cp: a.cp, ref: a.ref || "" };
+    if (a) rec = { id: Date.now(), label: a.label, street: a.street, colonia: a.colonia, cp: a.cp, ref: a.ref || "", ...(a.gps ? { gps: true } : {}), ...(a.lat != null ? { lat: a.lat, lng: a.lng } : {}), ...(a.noCoords ? { noCoords: true } : {}) };
     setProfile({ nombre, apellido: "", telefono, email: email || "", cp: a?.cp || "", colonia: a?.colonia || "", calle: a?.calle || "", numero: a?.numero || "", addrId: rec?.id ?? null });
     setAddresses(rec ? [rec] : []);
     setAddressId(rec ? rec.id : null);
@@ -574,14 +590,18 @@ export default function App() {
     goTab("home");
   };
   // «Guardar» en Perfil: la dirección del perfil se refleja en la lista de direcciones (la que se despliega en Inicio).
-  const saveProfile = () => {
+  const saveProfile = async () => {
     setEditingProfile(false);
     const street = `${profile.calle} ${profile.numero}`.trim();
     if (Object.keys(validateAddress({ label: "Casa", street, colonia: profile.colonia, cp: profile.cp })).length) return;
     const linked = addresses.find((a) => a.id === profile.addrId);
-    if (linked) setAddresses((l) => l.map((a) => (a.id === linked.id ? { ...a, street, colonia: profile.colonia, cp: profile.cp } : a)));
-    else if (!addresses.some((a) => a.street === street && a.cp === profile.cp)) {
-      const rec = { id: Date.now(), label: "Casa", street, colonia: profile.colonia, cp: profile.cp, ref: "" };
+    const dup = !linked && addresses.some((a) => a.street === street && a.cp === profile.cp);
+    if (dup) return;
+    const c = await geocodeAddress({ street, colonia: profile.colonia, cp: profile.cp });
+    const coords = c ? { lat: c.lat, lng: c.lng, noCoords: false, gps: false } : { lat: undefined, lng: undefined, noCoords: true, gps: false };
+    if (linked) setAddresses((l) => l.map((a) => (a.id === linked.id ? { ...a, street, colonia: profile.colonia, cp: profile.cp, ...coords } : a)));
+    else {
+      const rec = { id: Date.now(), label: "Casa", street, colonia: profile.colonia, cp: profile.cp, ref: "", ...coords };
       setAddresses((l) => [...l, rec]); setAddressId(rec.id); setProfile((p) => ({ ...p, addrId: rec.id }));
     }
   };
@@ -714,7 +734,7 @@ export default function App() {
               <div><strong>{o.employee?.name || "Tu prestador"}</strong><span className="fw-muted">{labelOf(o)} · Solicitud #{o.id}</span></div>
             </div>
             <div className="fwm-bar" aria-hidden="true"><i style={{ width: `${r?.status === "declined" ? 0 : !r || r.status === "pending" ? 8 : ((st + 1) / 4) * 100}%` }} /></div>
-            {withMap && idx === 0 && <TrackingMap reqId={r?.id} compact onOpen={() => { setFocusId(o.id); push("tracking"); }} step={st} status={r?.status || "pending"} providerName={o.employee?.name} providerLoc={r?.providerLoc} street={o.address?.street} />}
+            {withMap && idx === 0 && <TrackingMap reqId={r?.id} compact onOpen={() => { setFocusId(o.id); push("tracking"); }} step={st} status={r?.status || "pending"} providerName={o.employee?.name} providerLoc={r?.providerLoc} street={o.address?.street} {...locOf(o.address)} />}
             <div className="fw-active-actions">
               <button className={done ? "fw-btn-outline" : "fw-btn-primary"} onClick={() => { setFocusId(o.id); push("tracking"); }}>Ver seguimiento</button>
               {done && <button className="fw-btn-primary" onClick={() => { setFocusId(o.id); push("rating"); }}>Calificar servicio</button>}
@@ -840,7 +860,7 @@ export default function App() {
   const renderHome = () => (
     <div className="fw-screen">
       <div className="fw-home-top">
-        <HomeAddress addresses={addresses} selectedId={address?.id} onSelect={setAddressId} onManage={() => push("address")} />
+        <HomeAddress addresses={addresses} selectedId={address?.id} onSelect={setAddressId} onManage={() => push("address")} onLocate={locateMe} />
         <div className="fw-home-top-icons">
           <button className="fw-icon-btn" aria-label={`Notificaciones${unread ? `, ${unread} sin leer` : ""}`} aria-haspopup="dialog" aria-expanded={showNotifs} onClick={() => setShowNotifs(true)}>
             <Bell size={19} />
@@ -1081,7 +1101,7 @@ export default function App() {
         <div className="fw-order-line"><span>Fecha y hora</span><strong>{dayLabel(slotDate)} · {pad(slotHour)}:00</strong></div>
         <div className="fw-order-line"><span>Prestador</span><strong>{chosenProvider?.name}</strong></div>
         <div className="fw-order-line"><span>Dirección</span>
-          <span style={{ textAlign: "right" }}><strong>{address ? `${address.label}` : "Sin dirección"}</strong><br />{address && `${address.street}, ${address.colonia}, CP ${address.cp}`}<br />
+          <span style={{ textAlign: "right" }}><strong>{address ? address.label : "Sin dirección"}</strong><br />{address && addrLine(address)}<br />
             <button className="fw-linklike" onClick={() => push("address")}>{address ? "Cambiar" : "Agregar dirección"}</button></span></div>
       </div>
       <div className="fw-card">
@@ -1106,7 +1126,7 @@ export default function App() {
         {addresses.map((a) => (
           <button key={a.id} className={`fw-employee-card fw-pick ${a.id === addressId ? "is-on" : ""}`} aria-pressed={a.id === addressId} onClick={() => setAddressId(a.id)}>
             <div className="fw-avatar"><MapPin size={20} /></div>
-            <div style={{ textAlign: "left" }}><strong>{a.label}</strong><br /><span className="fw-muted">{a.street}, {a.colonia}, CP {a.cp}{a.ref && ` · ${a.ref}`}</span></div>
+            <div style={{ textAlign: "left" }}><strong>{a.label}</strong><br /><span className="fw-muted">{addrLine(a)}{a.ref && ` · ${a.ref}`}</span></div>
           </button>
         ))}
       </div>
@@ -1119,11 +1139,15 @@ export default function App() {
               {addrErr[k] && <p className="fw-field-err" role="alert">{addrErr[k]}</p>}
             </div>
           ))}
-          <button className="fw-btn-primary fw-btn-block" onClick={saveAddress}>Guardar dirección</button>
+          <button className="fw-btn-primary fw-btn-block" onClick={saveAddress} disabled={addrBusy}>{addrBusy ? "Ubicando dirección…" : "Guardar dirección"}</button>
           <button className="fw-linklike" onClick={() => { setShowAddrForm(false); setAddrErr({}); }}>Cancelar</button>
         </div>
       ) : (
-        <button className="fw-btn-outline fw-btn-block" onClick={() => setShowAddrForm(true)}>+ Agregar nueva dirección</button>
+        <>
+          <button className="fw-btn-outline fw-btn-block" onClick={async () => { setGeoErr(""); const r = await locateMe(); if (!r.ok) setGeoErr(r.error); }}>Usar mi ubicación actual</button>
+          {geoErr && <p className="fw-field-err" role="alert">{geoErr}</p>}
+          <button className="fw-btn-outline fw-btn-block" onClick={() => setShowAddrForm(true)}>+ Agregar nueva dirección</button>
+        </>
       )}
       <div className="fw-summary-bar"><button className="fw-btn-primary fw-btn-block" disabled={!address} onClick={pop}>Usar esta dirección</button></div>
     </div>
@@ -1240,7 +1264,7 @@ export default function App() {
           ))}
         </div>
 
-        <TrackingMap reqId={curReq?.id} onChat={() => setComms({ type: "chat" })} onCall={() => { startCall(currentOrder.id, "client"); setComms({ type: "call" }); }} step={trackingStep} status={curReq?.status || "pending"} providerName={currentOrder?.employee?.name} providerLoc={curReq?.providerLoc} street={currentOrder?.address?.street} />
+        <TrackingMap reqId={curReq?.id} onChat={() => setComms({ type: "chat" })} onCall={() => { startCall(currentOrder.id, "client"); setComms({ type: "call" }); }} step={trackingStep} status={curReq?.status || "pending"} providerName={currentOrder?.employee?.name} providerLoc={curReq?.providerLoc} street={currentOrder?.address?.street} {...locOf(currentOrder?.address)} />
 
         {curReq?.status === "pending" && <p className="fw-muted" role="status">Esperando a que {curReq.providerName} acepte tu solicitud…</p>}
         {currentOrder?.payMethod === "efectivo" && curReq?.status !== "declined" && <p className="fw-muted" role="status">Pagas en efectivo al prestador: {money(currentOrder.total)}.</p>}
@@ -1452,7 +1476,7 @@ export default function App() {
         </div>
       </div>
 
-      <PlaceMap label={`${profile.calle} ${profile.numero}`} />
+      <PlaceMap label={address ? addrLine(address) : ""} {...locOf(address)} />
 
       <div className="fw-profile-actions">
         <button className="fw-btn-outline" onClick={() => setEditingProfile((v) => !v)}>{editingProfile ? "Cancelar" : "Editar"}</button>
