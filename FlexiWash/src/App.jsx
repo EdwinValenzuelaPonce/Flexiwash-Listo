@@ -12,6 +12,7 @@ import SupportChat from "./Support.jsx";
 import Register from "./Register.jsx";
 import HomeAddress from "./HomeAddress.jsx";
 import ManageService from "./ManageService.jsx";
+import { feeQuote, reasonsFor } from "./cancelPolicy.js";
 import { locateAddress, addrLine, locOf } from "./geocode.js";
 import { Badge, BadgeRow, providerBadges, serviceBadge } from "./badges.jsx";
 import { ChatView, CallView, useIncomingCall } from "./Comms.jsx";
@@ -463,6 +464,10 @@ export default function App() {
   }, [ordersKey]);
 
   const confirmPayment = () => {
+    if (walletBalance < 0) {
+      notify("Saldo pendiente", `Debes ${money(-walletBalance)} por comisiones de cancelación. Abona a tu monedero para pedir otro servicio.`, { go: "wallet" });
+      return;
+    }
     if (paymentMethod === "tarjeta" && Object.keys(cardErr).length) { setShowCardErr(true); return; }
     if (paymentMethod === "monedero" && walletBalance < totals.total) {
       setShowDenied(true);
@@ -664,29 +669,57 @@ export default function App() {
     if (cur?.date === isoDate(d) && cur?.hour === h) return false;
     return isAvailable(m, d, h, [], sharedReqs.filter((x) => x.id !== o.id));
   };
-  const refundTextFor = (o) => (o.payMethod === "efectivo" ? "Pagabas en efectivo, así que no se te cobrará nada." : `Se reembolsarán ${money(o.total)} a tu monedero.`);
-  const doCancel = (o, reason) => {
-    updateRequest(o.id, { status: "cancelled", cancelledBy: "client", cancelReason: reason || "", cancelledAt: Date.now() });
+  // Comisión de cancelación/reagendado según motivo y tiempo que falta (ver cancelPolicy.js).
+  const quoteFor = (o, action, reasonId) => feeQuote({ action, reasonId, total: o.total, slot: reqOf(o)?.slot || o.slot, accepted: reqOf(o)?.status === "accepted" });
+  const doCancel = (o, reasonId) => {
+    const q = quoteFor(o, "cancel", reasonId);
+    if (!q) return; // el motivo es obligatorio
+    const fee = q.fee, r = reqOf(o);
+    const reason = reasonsFor("cancel").find((x) => x.id === reasonId);
+    updateRequest(o.id, {
+      status: "cancelled", cancelledBy: "client", cancelReason: reason?.label || "", cancelReasonId: reasonId, cancelFee: fee, cancelledAt: Date.now(),
+      // si el prestador ya había aceptado, la comisión se le abona (menos la comisión de FlexiWash; ver ledger.js)
+      ...(fee > 0 && r?.status === "accepted" ? { providerFee: (r.providerFee || 0) + fee } : {}),
+    });
     const cb = Math.round(o.total * 0.03 * 100) / 100;
     const paid = o.payMethod !== "efectivo"; // en efectivo no se cobró nada que reembolsar
-    setWalletBalance((b) => Math.round((b + (paid ? o.total : 0) - cb) * 100) / 100); // mismo cálculo que cuando el prestador rechaza (se descuenta la recompensa ya abonada)
+    // Mismo cálculo que cuando el prestador rechaza (se descuenta la recompensa ya abonada) y además se resta la comisión.
+    setWalletBalance((b) => Math.round((b + (paid ? o.total : 0) - cb - fee) * 100) / 100);
+    setWalletTx((l) => [
+      ...(fee > 0 ? [{ id: Date.now() + 1, label: `Comisión por cancelar #${o.id}`, amount: -fee, ts: Date.now() }] : []),
+      ...(paid ? [{ id: Date.now(), label: `Reembolso del servicio #${o.id}`, amount: o.total - cb, ts: Date.now() }] : []),
+      ...l,
+    ].slice(0, 20));
     setActiveOrders((l) => l.filter((x) => x.id !== o.id));
     if (focusId === o.id) setFocusId(null);
     setSeen((m) => ({ ...m, [o.id]: "cancelled:0" }));
     setComms((c) => (c && (c.reqId ?? focusId) === o.id ? null : c));
     setManage(null);
-    notify("Servicio cancelado", paid ? `Cancelaste la solicitud #${o.id}. Se reembolsaron ${money(o.total)} a tu monedero.` : `Cancelaste la solicitud #${o.id}. No se te cobró nada.`, { go: "home" });
+    notify("Servicio cancelado",
+      paid ? `Cancelaste la solicitud #${o.id}. Se reembolsaron ${money(o.total - fee)} a tu monedero${fee > 0 ? ` (comisión de ${money(fee)})` : ""}.`
+        : fee > 0 ? `Cancelaste la solicitud #${o.id}. Se descontó una comisión de ${money(fee)} de tu monedero.` : `Cancelaste la solicitud #${o.id}. No se te cobró nada.`, { go: fee > 0 ? "wallet" : "home" });
     if (screen === "tracking" || screen === "rating") goTab("home");
   };
-  const doReschedule = (o, d, h) => {
+  const doReschedule = (o, d, h, reasonId) => {
+    const q = quoteFor(o, "reschedule", reasonId); // se calcula con el horario ANTERIOR (antes de moverlo)
+    if (!q) return; // el motivo es obligatorio
+    const fee = q.fee, r = reqOf(o);
     const slot = { date: isoDate(d), label: dayLabel(d), hour: h };
     const when = `${slot.label} · ${pad(h)}:00`;
+    const reason = reasonsFor("reschedule").find((x) => x.id === reasonId);
     // Vuelve a «pendiente»: el prestador debe confirmar el nuevo horario.
-    updateRequest(o.id, { slot, when, status: "pending", step: 0, rescheduled: true, rescheduledAt: Date.now() });
+    updateRequest(o.id, {
+      slot, when, status: "pending", step: 0, rescheduled: true, rescheduledAt: Date.now(), rescheduleReason: reason?.label || "",
+      ...(fee > 0 ? { rescheduleFees: (r?.rescheduleFees || 0) + fee, ...(r?.status === "accepted" ? { providerFee: (r.providerFee || 0) + fee } : {}) } : {}),
+    });
+    if (fee > 0) {
+      setWalletBalance((b) => Math.round((b - fee) * 100) / 100); // puede quedar en negativo: se debe abonar antes de pedir otro servicio
+      setWalletTx((l) => [{ id: Date.now(), label: `Comisión por reagendar #${o.id}`, amount: -fee, ts: Date.now() }, ...l].slice(0, 20));
+    }
     setActiveOrders((l) => l.map((x) => (x.id === o.id ? { ...x, slot } : x)));
     setSeen((m) => ({ ...m, [o.id]: "pending:0" }));
     setManage(null);
-    notify("Servicio reagendado", `${o.employee?.name || "Tu prestador"} deberá confirmar tu nuevo horario: ${when}.`, { go: "tracking", reqId: o.id });
+    notify("Servicio reagendado", `${o.employee?.name || "Tu prestador"} deberá confirmar tu nuevo horario: ${when}.${fee > 0 ? ` Se descontó una comisión de ${money(fee)} de tu monedero.` : ""}`, { go: "tracking", reqId: o.id });
   };
   const renderManageButtons = (o) => canModify(o) && (
     <div className="fw-active-actions" style={{ marginTop: 8 }}>
@@ -1489,7 +1522,7 @@ export default function App() {
       </section>
       <section className="fw-section"><h3>Movimientos recientes</h3>
         <div className="fw-card">
-          {walletTx.length === 0 ? <span>Aún no tienes depósitos.</span> : walletTx.map((t) => <div key={t.id} className="fw-order-line"><span>{t.label}<br /><small>{timeAgo(t.ts)}</small></span><strong>+{money(t.amount)}</strong></div>)}
+          {walletTx.length === 0 ? <span>Aún no tienes movimientos.</span> : walletTx.map((t) => <div key={t.id} className="fw-order-line"><span>{t.label}<br /><small>{timeAgo(t.ts)}</small></span><strong style={t.amount < 0 ? { color: "#D64545" } : undefined}>{t.amount < 0 ? "−" : "+"}{money(Math.abs(t.amount))}</strong></div>)}
           <div className="fw-order-line"><span>Recompensa de servicio</span><strong>+ 3%</strong></div>
         </div>
       </section>
@@ -1593,7 +1626,7 @@ export default function App() {
         )}
         <div className="fw-content">{(screens[screen] || renderHome)()}</div>
         {showNotifs && renderNotifSheet()}
-        {manageOrder && <ManageService key={`${manageOrder.id}-${manage.mode}`} order={manageOrder} initialMode={manage.mode} days={nextDays()} hours={HOURS} slotOk={(d, h) => reschedOk(manageOrder, d, h)} dayLabel={dayLabel} isoDate={isoDate} pad={pad} refundText={refundTextFor(manageOrder)} onCancel={(reason) => doCancel(manageOrder, reason)} onReschedule={(d, h) => doReschedule(manageOrder, d, h)} onClose={() => setManage(null)} />}
+        {manageOrder && <ManageService key={`${manageOrder.id}-${manage.mode}`} order={manageOrder} initialMode={manage.mode} days={nextDays()} hours={HOURS} slotOk={(d, h) => reschedOk(manageOrder, d, h)} dayLabel={dayLabel} isoDate={isoDate} pad={pad} paid={manageOrder.payMethod !== "efectivo"} quote={(m, rid) => quoteFor(manageOrder, m, rid)} onCancel={(rid) => doCancel(manageOrder, rid)} onReschedule={(d, h, rid) => doReschedule(manageOrder, d, h, rid)} onClose={() => setManage(null)} />}
         {chatReqId != null && <ChatView reqId={chatReqId} me="client" title={chatName} subtitle="Tu prestador" onClose={() => setComms(null)} />}
         {supportOpen && <SupportChat role="client" threadId={supportThread} name={profile.nombre} focus={supportFocus} orders={[...sharedReqs].sort((a, b) => (b.createdAt || b.id || 0) - (a.createdAt || a.id || 0)).slice(0, 5).map((r) => ({ reqId: r.id, service: r.service, when: r.when, providerName: r.providerName }))} onOpenChat={(reqId, providerName) => { setSupportOpen(false); setSupportFocus(null); setComms({ type: "chat", reqId, title: providerName || sharedReqs.find((r) => r.id === reqId)?.providerName }); }} onClose={() => { setSupportOpen(false); setSupportFocus(null); }} />}
         {comms?.type === "call" && currentOrder && <CallView reqId={currentOrder.id} me="client" name={currentOrder.employee?.name} onClose={() => setComms(null)} />}

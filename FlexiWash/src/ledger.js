@@ -25,7 +25,8 @@ export function providerLedger({ providerId, requests, ledger, base = 0 }) {
   const paidJobs = mine.filter((r) => !isCash(r) && r.status === "done"); // sin payMethod (solicitudes viejas) = pagado en la app
   const rows = ledger.filter((l) => l.providerId === providerId);
   const cashOwed = r2(sum(cashJobs, (r) => commissionOf(r.price)));
-  const credited = r2(sum(paidJobs, (r) => netOf(r.price)));
+  // + comisiones por cancelar/reagendar tarde que el cliente pagó y que se abonan al prestador (r.providerFee)
+  const credited = r2(sum(paidJobs, (r) => netOf(r.price)) + sum(mine.filter((r) => r.providerFee > 0), (r) => netOf(r.providerFee)));
   const topups = r2(sum(rows.filter((l) => l.kind === "topup"), (l) => l.amount));
   const withdrawn = r2(sum(rows.filter((l) => l.kind === "withdrawal"), (l) => l.amount));
   const debtPaid = r2(sum(rows.filter((l) => l.kind === "debt_payment"), (l) => l.amount));
