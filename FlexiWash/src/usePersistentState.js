@@ -18,8 +18,9 @@ export function usePersistentState(key, initial) {
   return [value, setValue];
 }
 
-export function clearPersistedState() {
+// `keep`: claves (sin prefijo) que NO se borran, p. ej. ["profile", "addresses"] para conservar los datos de la cuenta al cerrar sesión.
+export function clearPersistedState(keep = []) {
   try {
-    Object.keys(window.localStorage).filter((k) => k.startsWith(PREFIX)).forEach((k) => window.localStorage.removeItem(k));
+    Object.keys(window.localStorage).filter((k) => k.startsWith(PREFIX) && !keep.includes(k.slice(PREFIX.length))).forEach((k) => window.localStorage.removeItem(k));
   } catch { /* ignorar */ }
 }

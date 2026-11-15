@@ -2,13 +2,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import logoFlexiWash from "./assets/LogoFlexiWash.webp";
 import ProviderPanel from "./Provider.jsx";
 import TrackingMap, { PlaceMap } from "./TrackingMap.jsx";
-import { useRequests, saveRequest, startCall, useAllMessages, useProviderCfgs, useRatings, saveRating, liveMember, usePhotos, resetDemo, useProviders, providerToMember, useLedger, useInvoices } from "./store.js";
+import { useRequests, saveRequest, updateRequest, startCall, useAllMessages, useProviderCfgs, useRatings, saveRating, liveMember, usePhotos, resetDemo, useProviders, providerToMember, useLedger, useInvoices } from "./store.js";
 import Billing from "./Billing.jsx";
 import { baseFor, providerLedger } from "./ledger.js";
 import { CHECK_LABELS } from "./identity.js";
 import ProviderRegister from "./ProviderRegister.jsx";
 import PastServices, { ProviderPreview } from "./PastServices.jsx";
 import SupportChat from "./Support.jsx";
+import Register from "./Register.jsx";
+import HomeAddress from "./HomeAddress.jsx";
+import ManageService from "./ManageService.jsx";
 import { Badge, BadgeRow, providerBadges, serviceBadge } from "./badges.jsx";
 import { ChatView, CallView, useIncomingCall } from "./Comms.jsx";
 import { usePersistentState, clearPersistedState } from "./usePersistentState.js";
@@ -274,7 +277,7 @@ export default function App() {
   };
   const logout = () => {
   setSession(false);
-  clearPersistedState();
+  clearPersistedState(["profile", "addresses", "addressId"]); // se conservan los datos de la cuenta para el siguiente inicio de sesión
   setCart({ autos: {}, hogar: {}, muebles: {}, extras: {} });
   setActiveTab("home");
   setStack(["login"]);
@@ -350,8 +353,8 @@ export default function App() {
   }, [cart]);
 
   const [profile, setProfile] = usePersistentState("profile", {
-    nombre: "Camila", apellido: "Torres", telefono: "667 123 4567",
-    cp: "80200", colonia: "Centro", calle: "Río Tamazula", numero: "145",
+    nombre: "", apellido: "", telefono: "", email: "",
+    cp: "", colonia: "", calle: "", numero: "",
   });
   const [editingProfile, setEditingProfile] = useState(false);
 
@@ -378,11 +381,8 @@ export default function App() {
   const [slotDate, setSlotDate] = useState(() => nextDays()[0]);
   const [slotHour, setSlotHour] = useState(null);
   const [chosenProvider, setChosenProvider] = useState(null);
-  const [addresses, setAddresses] = usePersistentState("addresses", [
-    { id: 1, label: "Casa", street: "Blvd. Universitarios 1520", colonia: "Universitarios", cp: "80010", ref: "Portón negro" },
-    { id: 2, label: "Trabajo", street: "Av. Álvaro Obregón 300", colonia: "Centro", cp: "80000", ref: "" },
-  ]);
-  const [addressId, setAddressId] = usePersistentState("addressId", 1);
+  const [addresses, setAddresses] = usePersistentState("addresses", []);
+  const [addressId, setAddressId] = usePersistentState("addressId", null);
   const emptyAddr = { label: "", street: "", colonia: "", cp: "", ref: "" };
   const [addrForm, setAddrForm] = useState(emptyAddr);
   const [addrErr, setAddrErr] = useState({});
@@ -392,6 +392,7 @@ export default function App() {
   const [supportOpen, setSupportOpen] = useState(false);
   const [supportFocus, setSupportFocus] = useState(null); // servicio desde el que se abrió «Ayuda con este servicio»
   const [verifyInfo, setVerifyInfo] = useState(null);
+  const [manage, setManage] = useState(null); // { id, mode: "cancel" | "reschedule" } del servicio que el cliente está cancelando/reagendando
   // Identificador del hilo de asistencia de este dispositivo (cliente)
   const supportThread = useMemo(() => { try { let v = window.localStorage.getItem("fw:deviceId"); if (!v) { v = Math.random().toString(36).slice(2, 10); window.localStorage.setItem("fw:deviceId", v); } return `client-${v}`; } catch { return "client-anon"; } }, []);
   const incomingId = useIncomingCall(currentOrder ? [currentOrder.id] : [], "client");
@@ -443,7 +444,7 @@ export default function App() {
         const cb = Math.round(o.total * 0.03 * 100) / 100;
         const paid = o.payMethod !== "efectivo"; // en efectivo no se cobró nada que reembolsar
         setWalletBalance((b) => Math.round((b + (paid ? o.total : 0) - cb) * 100) / 100);
-        notify("Solicitud rechazada", paid ? `${who} no pudo tomar tu servicio. Te reembolsamos ${money(o.total - cb)} al monedero.` : `${who} no pudo tomar tu servicio. No se te cobró nada.`, meta);
+        notify("Solicitud rechazada", paid ? `${who} no pudo tomar tu servicio. Te reembolsamos ${money(o.total - cb)} al monedero.` : `${who} no pudo tomar tu servicio. No se te cobró nada.`, { go: "home" });
       } else if (r.status === "done") {
         notify("Servicio finalizado", "Ya puedes calificar tu experiencia.", { go: "rating", reqId: r.id });
       } else if (r.status === "accepted") {
@@ -451,6 +452,17 @@ export default function App() {
       }
     });
     if (Object.keys(upd).length) setSeen((m) => ({ ...m, ...upd }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordersKey]);
+  // Solicitud rechazada por el prestador (o cancelada): se quita de «Tus servicios» y se cierra su seguimiento.
+  // El aviso de rechazo (con el reembolso) ya se mostró en el efecto anterior; aquí solo se limpia lo que quedó en pantalla.
+  useEffect(() => {
+    const ids = activeOrders.filter((o) => { const st = sharedReqs.find((x) => x.id === o.id)?.status; return st === "declined" || st === "cancelled"; }).map((o) => o.id);
+    if (!ids.length) return;
+    setActiveOrders((l) => l.filter((o) => !ids.includes(o.id)));
+    if (ids.includes(focusId)) setFocusId(null);
+    setComms((c) => (c && ids.includes(c.reqId ?? focusId) ? null : c));
+    if (screen === "tracking" || screen === "rating") goTab("home");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ordersKey]);
 
@@ -531,7 +543,7 @@ export default function App() {
     push("thanks");
   };
 
-  const address = addresses.find((a) => a.id === addressId);
+  const address = addresses.find((a) => a.id === addressId) || addresses[0];
   const cardErr = validateCard(card);
   const saveAddress = () => {
     const e = validateAddress(addrForm);
@@ -546,7 +558,32 @@ export default function App() {
     const err = kind === "loginPhone" ? (!validPhone(phone) ? "Ingresa un número de 10 dígitos." : "")
       : !validEmail(email) ? "Ingresa un correo válido." : pass.length < 6 ? "La contraseña debe tener al menos 6 caracteres." : "";
     setLoginErr(err);
-    if (!err) goTab("home");
+    if (err) return;
+    // Primera vez en este dispositivo (sin datos de perfil): pedimos nombre, teléfono y dirección (opcional).
+    // También si entra con un celular distinto al del perfil guardado (otra persona en el mismo dispositivo).
+    const isNew = !profile.nombre?.trim() || (kind === "loginPhone" && onlyDigits(profile.telefono || "") !== onlyDigits(phone));
+    if (isNew) push("register"); else goTab("home");
+  };
+  const completeRegistration = ({ nombre, telefono, email, address: a }) => {
+    let rec = null;
+    if (a) rec = { id: Date.now(), label: a.label, street: a.street, colonia: a.colonia, cp: a.cp, ref: a.ref || "" };
+    setProfile({ nombre, apellido: "", telefono, email: email || "", cp: a?.cp || "", colonia: a?.colonia || "", calle: a?.calle || "", numero: a?.numero || "", addrId: rec?.id ?? null });
+    setAddresses(rec ? [rec] : []);
+    setAddressId(rec ? rec.id : null);
+    setLoginForm({ phone: "", email: "", pass: "" });
+    goTab("home");
+  };
+  // «Guardar» en Perfil: la dirección del perfil se refleja en la lista de direcciones (la que se despliega en Inicio).
+  const saveProfile = () => {
+    setEditingProfile(false);
+    const street = `${profile.calle} ${profile.numero}`.trim();
+    if (Object.keys(validateAddress({ label: "Casa", street, colonia: profile.colonia, cp: profile.cp })).length) return;
+    const linked = addresses.find((a) => a.id === profile.addrId);
+    if (linked) setAddresses((l) => l.map((a) => (a.id === linked.id ? { ...a, street, colonia: profile.colonia, cp: profile.cp } : a)));
+    else if (!addresses.some((a) => a.street === street && a.cp === profile.cp)) {
+      const rec = { id: Date.now(), label: "Casa", street, colonia: profile.colonia, cp: profile.cp, ref: "" };
+      setAddresses((l) => [...l, rec]); setAddressId(rec.id); setProfile((p) => ({ ...p, addrId: rec.id }));
+    }
   };
   const allMsgs = useAllMessages();
   const [msgSeen, setMsgSeen] = usePersistentState("msgSeenTs", () => Date.now());
@@ -586,7 +623,7 @@ export default function App() {
     if ((t === "tracking" || t === "rating") && !live) t = "history"; // el servicio ya se calificó
     return t;
   };
-  const NOTIF_CTA = { chat: "Ver mensaje ›", tracking: "Ver seguimiento ›", rating: "Calificar servicio ›", wallet: "Ver monedero ›", history: "Ver actividad ›" };
+  const NOTIF_CTA = { home: "Solicitar de nuevo ›", chat: "Ver mensaje ›", tracking: "Ver seguimiento ›", rating: "Calificar servicio ›", wallet: "Ver monedero ›", history: "Ver actividad ›" };
   const openNotif = (n) => {
     setToast(null);
     setShowNotifs(false);
@@ -619,6 +656,49 @@ export default function App() {
   const hoursInAgenda = HOURS.filter((h) => team.some((m) => canServe(m) && inSchedule(m, slotDate, h)));
   const hourFree = (h) => team.some((m) => canTake(m, slotDate, h, cartCats));
 
+  // Cancelar / reagendar (cliente): solo mientras el servicio no haya iniciado (pendiente, o aceptado pero el prestador aún no sale).
+  const canModify = (o) => { const r = reqOf(o); return !r || r.status === "pending" || (r.status === "accepted" && (r.step || 0) === 0); };
+  const manageOrder = manage ? activeOrders.find((o) => o.id === manage.id) || null : null;
+  // Horario libre del MISMO prestador (agenda + sin otra solicitud en esa hora), distinto al actual y no pasado.
+  const reschedOk = (o, d, h) => {
+    const m = team.find((t) => t.id === o.employee?.id);
+    if (!m || isBlocked(m.id)) return false;
+    if (isoDate(d) === isoDate(now) && h <= now.getHours()) return false;
+    const cur = reqOf(o)?.slot || o.slot;
+    if (cur?.date === isoDate(d) && cur?.hour === h) return false;
+    return isAvailable(m, d, h, [], sharedReqs.filter((x) => x.id !== o.id));
+  };
+  const refundTextFor = (o) => (o.payMethod === "efectivo" ? "Pagabas en efectivo, así que no se te cobrará nada." : `Se reembolsarán ${money(o.total)} a tu monedero.`);
+  const doCancel = (o, reason) => {
+    updateRequest(o.id, { status: "cancelled", cancelledBy: "client", cancelReason: reason || "", cancelledAt: Date.now() });
+    const cb = Math.round(o.total * 0.03 * 100) / 100;
+    const paid = o.payMethod !== "efectivo"; // en efectivo no se cobró nada que reembolsar
+    setWalletBalance((b) => Math.round((b + (paid ? o.total : 0) - cb) * 100) / 100); // mismo cálculo que cuando el prestador rechaza (se descuenta la recompensa ya abonada)
+    setActiveOrders((l) => l.filter((x) => x.id !== o.id));
+    if (focusId === o.id) setFocusId(null);
+    setSeen((m) => ({ ...m, [o.id]: "cancelled:0" }));
+    setComms((c) => (c && (c.reqId ?? focusId) === o.id ? null : c));
+    setManage(null);
+    notify("Servicio cancelado", paid ? `Cancelaste la solicitud #${o.id}. Se reembolsaron ${money(o.total)} a tu monedero.` : `Cancelaste la solicitud #${o.id}. No se te cobró nada.`, { go: "home" });
+    if (screen === "tracking" || screen === "rating") goTab("home");
+  };
+  const doReschedule = (o, d, h) => {
+    const slot = { date: isoDate(d), label: dayLabel(d), hour: h };
+    const when = `${slot.label} · ${pad(h)}:00`;
+    // Vuelve a «pendiente»: el prestador debe confirmar el nuevo horario.
+    updateRequest(o.id, { slot, when, status: "pending", step: 0, rescheduled: true, rescheduledAt: Date.now() });
+    setActiveOrders((l) => l.map((x) => (x.id === o.id ? { ...x, slot } : x)));
+    setSeen((m) => ({ ...m, [o.id]: "pending:0" }));
+    setManage(null);
+    notify("Servicio reagendado", `${o.employee?.name || "Tu prestador"} deberá confirmar tu nuevo horario: ${when}.`, { go: "tracking", reqId: o.id });
+  };
+  const renderManageButtons = (o) => canModify(o) && (
+    <div className="fw-active-actions" style={{ marginTop: 8 }}>
+      <button className="fw-btn-outline" onClick={() => setManage({ id: o.id, mode: "reschedule" })}><Clock size={16} style={{ verticalAlign: "-3px" }} /> Reagendar</button>
+      <button className="fw-btn-outline" style={{ color: "#D64545", borderColor: "#D64545" }} onClick={() => setManage({ id: o.id, mode: "cancel" })}><X size={16} style={{ verticalAlign: "-3px" }} /> Cancelar</button>
+    </div>
+  );
+
   // Servicio en curso: siempre se puede volver a su seguimiento o calificarlo desde Inicio y Actividad
   const serviceDone = !!currentOrder && isDoneOrder(currentOrder);
   const labelOf = (o) => { const r = reqOf(o), st = stepOf(o); return r?.status === "declined" ? "Solicitud rechazada" : r?.status === "done" ? "Servicio finalizado" : r?.status === "accepted" ? (st === 0 ? "Confirmado" : STEPS[Math.min(st, 3)]) : "Esperando confirmación"; };
@@ -645,6 +725,7 @@ export default function App() {
                 {r?.status === "accepted" && st < 3 && <button className="fw-btn-outline" onClick={() => { setFocusId(o.id); startCall(o.id, "client"); setComms({ type: "call" }); }}><Phone size={16} style={{ verticalAlign: "-3px" }} /> Llamar</button>}
               </div>
             )}
+            {renderManageButtons(o)}
           </div>
         );
       })}
@@ -759,9 +840,7 @@ export default function App() {
   const renderHome = () => (
     <div className="fw-screen">
       <div className="fw-home-top">
-        <button className="fw-addr">
-          Dirección 1… <ChevronLeft size={14} className="fw-rot" />
-        </button>
+        <HomeAddress addresses={addresses} selectedId={address?.id} onSelect={setAddressId} onManage={() => push("address")} />
         <div className="fw-home-top-icons">
           <button className="fw-icon-btn" aria-label={`Notificaciones${unread ? `, ${unread} sin leer` : ""}`} aria-haspopup="dialog" aria-expanded={showNotifs} onClick={() => setShowNotifs(true)}>
             <Bell size={19} />
@@ -1207,6 +1286,7 @@ export default function App() {
             Calificar servicio
           </button>
         )}
+        {currentOrder && renderManageButtons(currentOrder)}
         {currentOrder && (
           <button className="fw-btn-outline fw-btn-block" onClick={() => { setSupportFocus({ reqId: currentOrder.id, service: curReq?.service, when: curReq?.when, providerName: currentOrder.employee?.name }); setSupportOpen(true); }}>
             <Headphones size={16} style={{ verticalAlign: "-3px" }} /> Ayuda con este servicio
@@ -1376,7 +1456,7 @@ export default function App() {
 
       <div className="fw-profile-actions">
         <button className="fw-btn-outline" onClick={() => setEditingProfile((v) => !v)}>{editingProfile ? "Cancelar" : "Editar"}</button>
-        <button className="fw-btn-primary" onClick={() => setEditingProfile(false)}>Guardar</button>
+        <button className="fw-btn-primary" onClick={saveProfile}>Guardar</button>
       </div>
 
       <button className="fw-teamlink" onClick={() => push("team")}>
@@ -1497,6 +1577,7 @@ export default function App() {
     loginEmail: () => renderLoginSub("loginEmail"),
     loginFacebook: () => renderLoginSub("loginFacebook"),
     loginAccount: () => renderLoginSub("loginAccount"),
+    register: () => <Register TopBar={TopBar} initialPhone={loginForm.phone} initialEmail={loginForm.email} onBack={pop} onDone={completeRegistration} />,
     providerLogin: renderProviderLogin,
     providerRegister: () => <ProviderRegister TopBar={TopBar} providers={registered} onBack={pop} onDone={(id) => { setProviderMe(id); setStack((st) => [...st.filter((x) => x !== "providerRegister"), "providerHome"]); }} />,
     providerHome: () => <ProviderPanel team={team} meId={providerMe} onExit={() => { setSession(false); setStack(["login"]); }} />,
@@ -1533,6 +1614,7 @@ export default function App() {
         )}
         <div className="fw-content">{(screens[screen] || renderHome)()}</div>
         {showNotifs && renderNotifSheet()}
+        {manageOrder && <ManageService key={`${manageOrder.id}-${manage.mode}`} order={manageOrder} initialMode={manage.mode} days={nextDays()} hours={HOURS} slotOk={(d, h) => reschedOk(manageOrder, d, h)} dayLabel={dayLabel} isoDate={isoDate} pad={pad} refundText={refundTextFor(manageOrder)} onCancel={(reason) => doCancel(manageOrder, reason)} onReschedule={(d, h) => doReschedule(manageOrder, d, h)} onClose={() => setManage(null)} />}
         {chatReqId != null && <ChatView reqId={chatReqId} me="client" title={chatName} subtitle="Tu prestador" onClose={() => setComms(null)} />}
         {supportOpen && <SupportChat role="client" threadId={supportThread} name={profile.nombre} focus={supportFocus} orders={[...sharedReqs].sort((a, b) => (b.createdAt || b.id || 0) - (a.createdAt || a.id || 0)).slice(0, 5).map((r) => ({ reqId: r.id, service: r.service, when: r.when, providerName: r.providerName }))} onOpenChat={(reqId, providerName) => { setSupportOpen(false); setSupportFocus(null); setComms({ type: "chat", reqId, title: providerName || sharedReqs.find((r) => r.id === reqId)?.providerName }); }} onClose={() => { setSupportOpen(false); setSupportFocus(null); }} />}
         {comms?.type === "call" && currentOrder && <CallView reqId={currentOrder.id} me="client" name={currentOrder.employee?.name} onClose={() => setComms(null)} />}

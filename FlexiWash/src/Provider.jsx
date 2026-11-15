@@ -250,7 +250,7 @@ export default function ProviderPanel({ onExit, team = [], meId }) {
             : requests.length === 0 ? <div className="fw-empty"><CheckCircle2 size={28} /><p>No hay solicitudes pendientes.</p></div>
             : <div className="fw-provider-list">{requests.map((r) => (
               <div className="fw-provider-request" key={r.id}>
-                <div className="fw-provider-request-head"><div className="fw-provider-request-icon">{React.createElement(ICONS[r.category], { size: 22 })}</div><div><small>{r.category}</small><strong>{r.service}</strong><span>{r.detail}</span></div><b>{money(net(r.price))}</b></div>
+                <div className="fw-provider-request-head"><div className="fw-provider-request-icon">{React.createElement(ICONS[r.category], { size: 22 })}</div><div><small>{r.category}{r.rescheduled ? " · Reagendada por el cliente" : ""}</small><strong>{r.service}</strong><span>{r.detail}</span></div><b>{money(net(r.price))}</b></div>
                 <div className="fw-provider-meta"><span><MapPin size={14} /> {r.zone}</span><span>{r.when} · ganas el {100 - COMMISSION * 100}%</span></div>
                 <p className="fw-muted" style={{ margin: 0, fontSize: 12 }}>{r.payMethod === "efectivo" ? `Pago en efectivo: tú cobras y debes ${money(commissionOf(r.price))} de comisión a FlexiWash.` : "Pago en la app: FlexiWash te deposita tu parte."}</p>
                 <div className="fw-provider-actions"><button className="fw-btn-outline" onClick={() => decline(r)}>Omitir</button><button className="fw-btn-primary" disabled={L.blocked} onClick={() => accept(r)}>Aceptar</button></div>
