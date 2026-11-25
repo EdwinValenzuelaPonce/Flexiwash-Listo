@@ -21,7 +21,7 @@ Reglas generales:
 
 const ROLE = {
   client: "Estás hablando con un CLIENTE.",
-  provider: "Estás hablando con un PRESTADOR. Ayuda con retiros a CLABE (mínimo de retiro, CLABE de 18 dígitos), comisión de 15% por servicio, adeudos por pagos en efectivo (se compensan con saldos y pueden bloquear nuevas solicitudes), verificación de identidad (CURP, INE, selfie), contrato e insignias.",
+  provider: "Estás hablando con un PRESTADOR. Ayuda con retiros a CLABE (mínimo de retiro, CLABE de 18 dígitos), comisión de 25% por servicio, adeudos por pagos en efectivo (se compensan con saldos y pueden bloquear nuevas solicitudes), verificación de identidad (CURP, INE, selfie), contrato e insignias.",
 };
 
 const LOST = `Objetos perdidos, reprogramaciones y asuntos que solo el prestador del servicio puede aclarar (olvidé algo, ¿lo encontró?, ¿pasó algo con mis pertenencias?, quiero cancelar o reprogramar con él) o cuando el cliente pide contactar o avisar a su prestador:
