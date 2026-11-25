@@ -1590,7 +1590,7 @@ export default function App() {
         {pl.err && <p className="fw-field-err" role="alert">{pl.err}</p>}
         <button className="fw-btn-primary fw-btn-block" onClick={providerLogin}>Iniciar sesión</button>
         <button className="fw-btn-outline fw-btn-block" onClick={() => push("providerRegister")}>Registrarme como prestador</button>
-        <p className="fw-muted" style={{ fontSize: 12 }}>Cuenta demo: 667 555 0142 · PIN 1234</p>
+        <p className="fw-muted" style={{ fontSize: 12 }}></p>
       </div>
     </div>
   );
