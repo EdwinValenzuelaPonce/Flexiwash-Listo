@@ -1,11 +1,12 @@
 import React, { useRef, useState } from "react";
 import { FileText } from "lucide-react";
+import { COMMISSION } from "./ledger.js";
 
 // Contrato de prestación de servicios independiente para prestadores de FlexiWash.
 // BORRADOR: debe revisarlo un abogado antes de usarse en producción. Los valores entre
 // constantes (plazo de remisión, comisión) se ajustan aquí.
 export const CONTRACT_VERSION = "1.0";
-const COMMISSION_PCT = 15;   // debe coincidir con COMMISSION en Provider.jsx
+const COMMISSION_PCT = Math.round(COMMISSION * 100);   // se toma de ledger.js (una sola fuente)
 const REMIT_DAYS = 7;        // plazo para remitir la comisión de servicios cobrados en efectivo
 
 export const CLAUSES = [

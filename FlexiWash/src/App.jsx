@@ -401,6 +401,7 @@ export default function App() {
   const [showCardErr, setShowCardErr] = useState(false);
   const [loginForm, setLoginForm] = useState({ phone: "", email: "", pass: "" });
   const [loginErr, setLoginErr] = useState("");
+  const [accountMode, setAccountMode] = useState("email"); // «Ya tengo cuenta»: ingresar con "email" o con "phone"
   const [ratings, setRatings] = useState(RATING_QUESTIONS.map(() => 0));
   const [comment, setComment] = useState("");
 
@@ -567,13 +568,17 @@ export default function App() {
   };
   const submitLogin = (kind) => {
     const { phone, email, pass } = loginForm;
-    const err = kind === "loginPhone" ? (!validPhone(phone) ? "Ingresa un número de 10 dígitos." : "")
-      : !validEmail(email) ? "Ingresa un correo válido." : pass.length < 6 ? "La contraseña debe tener al menos 6 caracteres." : "";
+    const viaPhone = kind === "loginPhone" || (kind === "loginAccount" && accountMode === "phone");
+    const err = viaPhone && !validPhone(phone) ? "Ingresa un número de 10 dígitos."
+      : !viaPhone && !validEmail(email) ? "Ingresa un correo válido."
+      : kind !== "loginPhone" && pass.length < 6 ? "La contraseña debe tener al menos 6 caracteres." : "";
     setLoginErr(err);
     if (err) return;
     // Primera vez en este dispositivo (sin datos de perfil): pedimos nombre, teléfono y dirección (opcional).
     // También si entra con un celular distinto al del perfil guardado (otra persona en el mismo dispositivo).
-    const isNew = !profile.nombre?.trim() || (kind === "loginPhone" && onlyDigits(profile.telefono || "") !== onlyDigits(phone));
+    const isNew = !profile.nombre?.trim()
+      || (viaPhone && onlyDigits(profile.telefono || "") !== onlyDigits(phone))
+      || (!viaPhone && !!profile.email && profile.email.trim().toLowerCase() !== email.trim().toLowerCase());
     if (isNew) push("register"); else goTab("home");
   };
   const completeRegistration = ({ nombre, telefono, email, address: a }) => {
@@ -828,8 +833,9 @@ export default function App() {
       loginPhone: { title: "Ingresa tu número celular", sub: "Te enviaremos un código para confirmarlo." },
       loginEmail: { title: "Ingresa a tu cuenta", sub: "Te enviaremos un código para confirmarlo." },
       loginFacebook: { title: "Ingresa a tu cuenta", sub: "Usaremos tu correo de Facebook." },
-      loginAccount: { title: "Continúa con:", sub: "Recuperamos tu perfil guardado." },
+      loginAccount: { title: "Inicia sesión", sub: "Ingresa con tu correo o con tu número de celular." },
     }[kind];
+    const viaPhone = kind === "loginPhone" || (kind === "loginAccount" && accountMode === "phone");
     return (
       <div className="fw-screen">
         <TopBar title="" onBack={pop} />
@@ -841,16 +847,22 @@ export default function App() {
               <FacebookGlyph size={54} />
             </div>
           )}
-          {kind === "loginPhone" ? (
+          {kind === "loginAccount" && (
+            <div className="fw-slots" role="group" aria-label="Ingresar con">
+              <button type="button" className={`fw-slot ${accountMode === "email" ? "is-on" : ""}`} aria-pressed={accountMode === "email"} onClick={() => { setAccountMode("email"); setLoginErr(""); }}>Correo</button>
+              <button type="button" className={`fw-slot ${accountMode === "phone" ? "is-on" : ""}`} aria-pressed={accountMode === "phone"} onClick={() => { setAccountMode("phone"); setLoginErr(""); }}>Celular</button>
+            </div>
+          )}
+          {viaPhone ? (
             <div className="fw-phone-input">
               <span>🇲🇽 +52</span>
               <input placeholder="Número de teléfono" inputMode="numeric" autoComplete="tel-national" maxLength={10} aria-label="Teléfono" value={loginForm.phone} onChange={(e) => { setLoginForm({ ...loginForm, phone: onlyDigits(e.target.value) }); setLoginErr(""); }} />
             </div>
           ) : (
-            <>
-              <input className="fw-input" placeholder="Correo electrónico" type="email" autoComplete="email" value={loginForm.email} onChange={(e) => { setLoginForm({ ...loginForm, email: e.target.value }); setLoginErr(""); }} />
-              <input className="fw-input" placeholder="Contraseña" type="password" autoComplete="current-password" value={loginForm.pass} onChange={(e) => { setLoginForm({ ...loginForm, pass: e.target.value }); setLoginErr(""); }} />
-            </>
+            <input className="fw-input" placeholder="Correo electrónico" type="email" autoComplete="email" value={loginForm.email} onChange={(e) => { setLoginForm({ ...loginForm, email: e.target.value }); setLoginErr(""); }} />
+          )}
+          {kind !== "loginPhone" && (
+            <input className="fw-input" placeholder="Contraseña" type="password" autoComplete="current-password" value={loginForm.pass} onChange={(e) => { setLoginForm({ ...loginForm, pass: e.target.value }); setLoginErr(""); }} />
           )}
           {loginErr && <p className="fw-field-err" role="alert">{loginErr}</p>}
           <button className="fw-btn-primary fw-btn-block" onClick={() => submitLogin(kind)}>

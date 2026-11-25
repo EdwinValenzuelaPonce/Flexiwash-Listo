@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { X, Send, Clock } from "lucide-react";
 import { sendMessage, sendSupport, useSupport, useAllMessages } from "./store.js";
+import { COMMISSION } from "./ledger.js";
+const PCT = Math.round(COMMISSION * 100); // comisión de FlexiWash (ledger.js)
 
 // Chat de asistencia de FlexiWash (estilo «Ayuda» de Uber):
 //  - TODO se responde al instante: los temas del menú tienen respuesta local (sin red) y el texto libre lo atiende la IA
@@ -24,7 +26,7 @@ const FAQ = {
     [/injust/i, "Las calificaciones no se borran automáticamente. Registra un reporte con lo que pasó y queda con folio para su revisión.", ["report"]],
     [/problema|reportar|cliente/i, "Cuéntame qué pasó y lo registro al instante con un folio.", ["report"]],
     [/retir|clabe|depósit|deposit|saldo|ganancia/i, "Puedes retirar desde la pestaña de ganancias a tu CLABE cuando llegues al mínimo de retiro. Revisa que tu CLABE tenga 18 dígitos.", ["withdraw"]],
-    [/comisi|efectivo|adeudo|remit/i, "FlexiWash retiene 15% por servicio. En pagos en efectivo, si hay adeudo se descuenta de tu saldo; si no alcanza, puedes recargar saldo en Ganancias → Recargar saldo.", ["topup"]],
+    [/comisi|efectivo|adeudo|remit/i, `FlexiWash retiene ${PCT}% por servicio. En pagos en efectivo, si hay adeudo se descuenta de tu saldo; si no alcanza, puedes recargar saldo en Ganancias → Recargar saldo.`, ["topup"]],
     [/verific|identidad|ine|curp|contrato|baja|suspend/i, "Tu identidad se valida con CURP, INE y selfie. Si tu cuenta fue rechazada o suspendida, registra un reporte para que la revisen.", ["report"]],
     [/insignia|calific|estrella|reseña|top/i, "Las insignias se otorgan solas según tus calificaciones: puntualidad, amabilidad, calidad y número de servicios."],
   ],
@@ -51,7 +53,7 @@ const MENU = {
   provider: [
     { label: "Mi saldo y comisión", answer: ({ account: a }) => a
       ? `Tu saldo disponible es $${a.balance} y tu comisión pendiente es $${a.debt} (límite $${a.debtLimit}). ${a.blocked ? `Estás bloqueado para solicitudes nuevas: recarga al menos $${Math.max(0, Math.round((a.debt - a.debtLimit) * 100) / 100)} para desbloquearte.` : "No estás bloqueado."} La comisión de efectivo se descuenta sola de tus ganancias; si no alcanza, puedes recargar saldo.`
-      : "FlexiWash retiene 15% por servicio. En pagos en efectivo, la comisión se descuenta de tu saldo; si no alcanza, queda como adeudo y puedes recargar saldo en Ganancias → Recargar saldo.", actions: ["topup"] },
+      : `FlexiWash retiene ${PCT}% por servicio. En pagos en efectivo, la comisión se descuenta de tu saldo; si no alcanza, queda como adeudo y puedes recargar saldo en Ganancias → Recargar saldo.`, actions: ["topup"] },
     { label: "Retiros", answer: ({ account: a }) => `Puedes retirar desde Ganancias a tu CLABE (18 dígitos) cuando llegues al mínimo de retiro${a?.minWithdraw ? ` ($${a.minWithdraw})` : ""}.`, actions: ["withdraw"] },
     { label: "Verificación", answer: "Tu identidad se valida con CURP, INE y selfie. Si tu cuenta fue rechazada o suspendida, registra un reporte para que la revisen.", actions: ["report"] },
     { label: "Insignias", answer: "Las insignias se otorgan solas según tus calificaciones: puntualidad, amabilidad, calidad y número de servicios." },

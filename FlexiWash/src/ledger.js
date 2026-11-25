@@ -4,7 +4,7 @@
 //  - La deuda se descuenta automáticamente de lo que FlexiWash le debe al prestador (servicios con tarjeta Y recargas de saldo).
 //  - Recarga ("topup", por tarjeta, SPEI u OXXO): suma al saldo y, si hay comisión pendiente, se cobra sola.
 //    Si solo cobra en efectivo, la deuda se acumula; al pasar DEBT_LIMIT no puede recibir solicitudes nuevas hasta pagar.
-export const COMMISSION = 0.15;   // comisión FlexiWash sobre el precio del servicio
+export const COMMISSION = 0.25;   // comisión FlexiWash sobre el precio del servicio
 export const DEBT_LIMIT = 300;    // deuda pendiente máxima (MXN); arriba de esto se bloquean solicitudes nuevas
 export const MIN_WITHDRAW = 100;
 export const MIN_TOPUP = 100;     // recarga mínima del monedero del prestador (MXN)
